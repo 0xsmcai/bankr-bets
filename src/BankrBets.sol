@@ -61,7 +61,7 @@ contract BankrBets is ReentrancyGuard {
         address taker;
         Direction creatorDirection;
         uint256 amount;
-        int24 strikeTick;       // Uniswap V3 tick at creation
+        int24 strikeTick;       // Uniswap V3 TWAP tick (refreshed to current TWAP on take)
         uint256 expiry;
         Status status;
         address winner;
@@ -411,8 +411,7 @@ contract BankrBets is ReentrancyGuard {
             try registry.ownerOf(i) returns (address owner) {
                 if (owner == addr) return true;
             } catch {
-                // ID doesn't exist — stop scanning (IDs are sequential)
-                break;
+                // ID doesn't exist — continue scanning (IDs may have gaps)
             }
         }
         return false;

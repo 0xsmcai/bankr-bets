@@ -64,9 +64,14 @@ contract MockV3Pool {
     int24 public currentTick;
     int56 public tickCumulative0; // cumulative at (now - window)
     int56 public tickCumulative1; // cumulative at now
+    bool public observeShouldRevert;
 
     function setTick(int24 _tick) external {
         currentTick = _tick;
+    }
+
+    function setObserveShouldRevert(bool _shouldRevert) external {
+        observeShouldRevert = _shouldRevert;
     }
 
     /// @dev Set tick cumulatives for TWAP calculation.
@@ -97,6 +102,7 @@ contract MockV3Pool {
         view
         returns (int56[] memory tickCumulatives, uint160[] memory secondsPerLiquidityCumulativeX128s)
     {
+        require(!observeShouldRevert, "OLD");
         tickCumulatives = new int56[](2);
         tickCumulatives[0] = tickCumulative0;
         tickCumulatives[1] = tickCumulative1;
@@ -653,6 +659,14 @@ contract BankrBetsTest is Test {
         assertEq(usdc.balanceOf(agentA) - balBefore, 50e6);
         (,,,,,, BankrBets.Status status,) = market.getBet(betId);
         assertEq(uint8(status), uint8(BankrBets.Status.CANCELLED));
+    }
+
+    function test_createBet_revertIfOracleUnavailable() public {
+        pool.setObserveShouldRevert(true);
+
+        vm.prank(agentA);
+        vm.expectRevert(BankrBets.OracleUnavailable.selector);
+        market.createBet(BankrBets.Direction.LONG, 50e6);
     }
 
     function test_reclaimExpiredBet_revertIfNotExpired() public {
