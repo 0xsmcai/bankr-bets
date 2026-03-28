@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BANKR BETS — P2P Binary Predictions</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0a0a0a;
+      --surface: #111111;
+      --green: #00ff41;
+      --green-dim: #1a3a1a;
+      --green-muted: #4a7a4a;
+      --amber: #ffb000;
+      --amber-dim: #3a2a00;
+      --red: #ff3333;
+      --red-dim: #3a1111;
+      --white: #e0e0e0;
+      --glow-green: 0 0 8px rgba(0, 255, 65, 0.3);
+      --glow-amber: 0 0 8px rgba(255, 176, 0, 0.3);
+      --font: 'JetBrains Mono', monospace;
+      --base: 8px;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--green);
+      font-family: var(--font);
+      font-size: 13px;
+      line-height: 1.5;
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      padding: 16px;
+    }
+
+    /* Scanline overlay */
+    body::after {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0, 0, 0, 0.08) 2px,
+        rgba(0, 0, 0, 0.08) 4px
+      );
+      pointer-events: none;
+      z-index: 9999;
+    }
+
+    .terminal {
+      max-width: 680px;
+      width: 100%;
+      border: 2px solid var(--green-dim);
+    }
+
+    /* ── Header ───────────────────────────── */
+    .header {
+      padding: 12px 16px;
+      border-bottom: 2px solid var(--green-dim);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .header h1 {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--green);
+      text-shadow: var(--glow-green);
+      letter-spacing: 2px;
+    }
+
+    .header .meta {
+      font-size: 11px;
+      color: var(--green-muted);
+    }
+
+    /* ── Warning bar ──────────────────────── */
+    .warning-bar {
+      padding: 8px 16px;
+      background: rgba(255, 176, 0, 0.05);
+      border-bottom: 1px solid var(--amber-dim);
+      color: var(--amber);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+
+    /* ── Sections ─────────────────────────── */
+    .section {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--green-dim);
+    }
+
+    .section-title {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--amber);
+      text-shadow: var(--glow-amber);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 8px;
+    }
+
+    .empty-state {
+      color: var(--green-muted);
+      font-size: 13px;
+      padding: 4px 0;
+    }
+
+    /* ── Bet rows ─────────────────────────── */
+    .bet-row {
+      padding: 6px 0;
+      border-bottom: 1px solid rgba(26, 58, 26, 0.4);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px 16px;
+      align-items: baseline;
+    }
+
+    .bet-row:last-child { border-bottom: none; }
+
+    .bet-id {
+      color: var(--green-muted);
+      font-weight: 700;
+    }
+
+    .badge {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      padding: 1px 6px;
+      border: 1px solid;
+      letter-spacing: 0.5px;
+    }
+
+    .badge-long { color: var(--green); border-color: var(--green-dim); }
+    .badge-short { color: var(--amber); border-color: var(--amber-dim); }
+    .badge-open { color: var(--amber); border-color: var(--amber-dim); }
+    .badge-active { color: var(--green); border-color: var(--green-dim); }
+    .badge-settled { color: var(--green-muted); border-color: var(--green-dim); }
+    .badge-cancelled { color: var(--red); border-color: var(--red-dim); }
+    .badge-won { color: var(--green); border-color: var(--green-dim); background: rgba(0, 255, 65, 0.05); }
+    .badge-lost { color: var(--red); border-color: var(--red-dim); background: rgba(255, 51, 51, 0.05); }
+
+    .amount { color: var(--green); font-variant-numeric: tabular-nums; }
+    .price { color: var(--green-muted); font-variant-numeric: tabular-nums; }
+    .expiry { color: var(--green-muted); font-size: 11px; }
+    .creator { color: var(--green-muted); font-size: 11px; }
+
+    .pnl-winning { color: var(--green); text-shadow: var(--glow-green); }
+    .pnl-losing { color: var(--red); }
+    .pnl-flat { color: var(--green-muted); }
+
+    .result-won { color: var(--green); }
+    .result-lost { color: var(--red); }
+
+    /* ── Stats bar ────────────────────────── */
+    .stats-bar {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--green-dim);
+      display: flex;
+      gap: 24px;
+      flex-wrap: wrap;
+    }
+
+    .stat {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .stat-label {
+      font-size: 11px;
+      color: var(--green-muted);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .stat-value {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--green);
+      text-shadow: var(--glow-green);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .stat-value.amber {
+      color: var(--amber);
+      text-shadow: var(--glow-amber);
+    }
+
+    /* ── Commands section ─────────────────── */
+    .commands {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--green-dim);
+    }
+
+    .cmd-row {
+      display: flex;
+      gap: 8px;
+      padding: 2px 0;
+    }
+
+    .cmd-name {
+      color: var(--green);
+      min-width: 280px;
+      font-weight: 700;
+    }
+
+    .cmd-desc {
+      color: var(--green-muted);
+    }
+
+    /* ── Prompt ────────────────────────────── */
+    .prompt-area {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--green-dim);
+      display: flex;
+      align-items: center;
+      gap: 0;
+    }
+
+    .prompt-label {
+      color: var(--green-muted);
+      white-space: nowrap;
+    }
+
+    .prompt-input {
+      background: transparent;
+      border: none;
+      outline: none;
+      color: var(--green);
+      font-family: var(--font);
+      font-size: 13px;
+      flex: 1;
+      caret-color: var(--green);
+    }
+
+    .cursor-block {
+      display: inline-block;
+      width: 8px;
+      height: 14px;
+      background: var(--green);
+      animation: blink 1s step-end infinite;
+    }
+
+    @keyframes blink {
+      50% { opacity: 0; }
+    }
+
+    /* ── Output area ──────────────────────── */
+    .output {
+      padding: 8px 16px;
+      border-bottom: 1px solid var(--green-dim);
+      min-height: 40px;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+
+    .output-line { padding: 1px 0; }
+    .output-success { color: var(--green); }
+    .output-error { color: var(--red); }
+    .output-warning { color: var(--amber); }
+    .output-info { color: var(--green-muted); }
+
+    /* ── Disclaimer ───────────────────────── */
+    .disclaimer {
+      padding: 10px 16px;
+      color: var(--green-muted);
+      font-size: 11px;
+      line-height: 1.6;
+      border-top: 1px solid var(--green-dim);
+    }
+
+    /* ── Scrollbar ─────────────────────────── */
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: var(--green-dim); }
+
+    /* ── Responsive ────────────────────────── */
+    @media (max-width: 500px) {
+      body { padding: 8px; }
+      .header h1 { font-size: 14px; letter-spacing: 1px; }
+      .cmd-name { min-width: 200px; }
+      .stats-bar { gap: 16px; }
+      .stat-value { font-size: 16px; }
+      .bet-row { gap: 2px 8px; }
+    }
+
+    /* ── Alerts ─────────────────────────────── */
+    .alert {
+      padding: 6px 12px;
+      margin: 4px 0;
+      border-left: 3px solid;
+    }
+    .alert-success { border-color: var(--green); background: rgba(0, 255, 65, 0.05); }
+    .alert-warning { border-color: var(--amber); background: rgba(255, 176, 0, 0.05); }
+    .alert-error { border-color: var(--red); background: rgba(255, 51, 51, 0.05); }
+  </style>
+</head>
+<body>
+  <div class="terminal" id="terminal">
+
+    <!-- Header -->
+    <div class="header">
+      <h1>BANKR BETS</h1>
+      <span class="meta">P2P Binary Predictions &mdash; ERC-8004 Gated</span>
+    </div>
+
+    <!-- Warning -->
+    <div class="warning-bar">
+      &#9888; EXPERIMENTAL &mdash; YOU CAN LOSE YOUR ENTIRE DEPOSIT
+    </div>
+
+    <!-- Stats -->
+    <div class="stats-bar" id="stats-bar">
+      <div class="stat">
+        <span class="stat-label">BNKR/WETH</span>
+        <span class="stat-value" id="spot-price">$0.0251</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">Open Bets</span>
+        <span class="stat-value amber" id="open-count">3</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">Active</span>
+        <span class="stat-value" id="active-count">1</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">Block</span>
+        <span class="stat-value" id="block-num" style="font-size:13px; padding-top:4px;">12345678</span>
+      </div>
+    </div>
+
+    <!-- Open Bets -->
+    <div class="section" id="open-bets-section">
+      <div class="section-title">Open Bets (waiting for counterparty)</div>
+      <div id="open-bets">
+        <div class="bet-row">
+          <span class="bet-id">#42</span>
+          <span class="badge badge-long">LONG</span>
+          <span class="amount">$50.00</span>
+          <span class="expiry">expires 14:00 UTC</span>
+          <span class="creator">(0xA3..8f)</span>
+        </div>
+        <div class="bet-row">
+          <span class="bet-id">#43</span>
+          <span class="badge badge-short">SHORT</span>
+          <span class="amount">$25.00</span>
+          <span class="expiry">expires 14:30 UTC</span>
+          <span class="creator">(0x7F..2d)</span>
+        </div>
+        <div class="bet-row">
+          <span class="bet-id">#44</span>
+          <span class="badge badge-long">LONG</span>
+          <span class="amount">$100.00</span>
+          <span class="expiry">expires 15:00 UTC</span>
+          <span class="creator">(0xB1..c9)</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Active Bets -->
+    <div class="section" id="active-bets-section">
+      <div class="section-title">Your Active Bets</div>
+      <div id="active-bets">
+        <div class="bet-row">
+          <span class="bet-id">#41</span>
+          <span class="badge badge-long">LONG</span>
+          <span class="amount">$100.00</span>
+          <span class="expiry">settles 15:00 UTC</span>
+          <span class="price">strike: $0.0234</span>
+          <span class="price">now: $0.0251</span>
+          <span class="pnl-winning">&#9650; WINNING (+7.3%)</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- History -->
+    <div class="section" id="history-section">
+      <div class="section-title">Your History</div>
+      <div id="history">
+        <div class="bet-row">
+          <span class="bet-id">#40</span>
+          <span class="badge badge-long">LONG</span>
+          <span class="amount">$100.00</span>
+          <span class="badge badge-won">WON</span>
+          <span class="result-won">+$99.00 (net)</span>
+        </div>
+        <div class="bet-row">
+          <span class="bet-id">#39</span>
+          <span class="badge badge-short">SHORT</span>
+          <span class="amount">$50.00</span>
+          <span class="badge badge-lost">LOST</span>
+          <span class="result-lost">-$50.00</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Commands -->
+    <div class="commands">
+      <div class="section-title">Commands</div>
+      <div class="cmd-row">
+        <span class="cmd-name">create &lt;long|short&gt; &lt;amount&gt;</span>
+        <span class="cmd-desc">create a new bet</span>
+      </div>
+      <div class="cmd-row">
+        <span class="cmd-name">take &lt;betId&gt;</span>
+        <span class="cmd-desc">take the other side</span>
+      </div>
+      <div class="cmd-row">
+        <span class="cmd-name">settle &lt;betId&gt;</span>
+        <span class="cmd-desc">settle after expiry</span>
+      </div>
+      <div class="cmd-row">
+        <span class="cmd-name">cancel &lt;betId&gt;</span>
+        <span class="cmd-desc">cancel unmatched bet</span>
+      </div>
+      <div class="cmd-row">
+        <span class="cmd-name">status</span>
+        <span class="cmd-desc">show your bets</span>
+      </div>
+      <div class="cmd-row">
+        <span class="cmd-name">open</span>
+        <span class="cmd-desc">show open bets</span>
+      </div>
+      <div class="cmd-row">
+        <span class="cmd-name">price</span>
+        <span class="cmd-desc">current BNKR spot price</span>
+      </div>
+      <div class="cmd-row">
+        <span class="cmd-name">help</span>
+        <span class="cmd-desc">show this command list</span>
+      </div>
+    </div>
+
+    <!-- Output area -->
+    <div class="output" id="output">
+      <div class="output-line output-success">&#10003; Connected to Base (block 12345678)</div>
+      <div class="output-line output-success">&#10003; Registered as Agent 8453:36868</div>
+      <div class="output-line output-info">3 open bets | 1 active | USDC balance: $250.00</div>
+    </div>
+
+    <!-- Prompt -->
+    <div class="prompt-area">
+      <span class="prompt-label">bankr-bets &gt;&nbsp;</span>
+      <input class="prompt-input" id="prompt-input" type="text" spellcheck="false" autocomplete="off" autofocus>
+    </div>
+
+    <!-- Disclaimer -->
+    <div class="disclaimer">
+      For informational purposes only. Use at your own risk.<br>
+      This is not financial advice. Binary bets carry risk of total loss
+      of deposited USDC. Max bet: $100. Agents and their operators bear
+      full responsibility.
+    </div>
+  </div>
+
+  <script>
+    // ── Demo terminal interaction ──────────────────────────────
+    const input = document.getElementById('prompt-input');
+    const output = document.getElementById('output');
+
+    const COMMANDS = {
+      help: () => [
+        { text: 'Available commands:', cls: 'output-info' },
+        { text: '  create <long|short> <amount>  — create a new bet', cls: 'output-info' },
+        { text: '  take <betId>                  — take the other side', cls: 'output-info' },
+        { text: '  settle <betId>                — settle after expiry', cls: 'output-info' },
+        { text: '  cancel <betId>                — cancel unmatched bet', cls: 'output-info' },
+        { text: '  status                        — show your bets', cls: 'output-info' },
+        { text: '  open                          — show open bets', cls: 'output-info' },
+        { text: '  price                         — current BNKR spot price', cls: 'output-info' },
+        { text: '  help                          — show this list', cls: 'output-info' },
+      ],
+
+      price: () => [
+        { text: 'BNKR/WETH  $0.0251  |  Pool: 0x22af...6f3b', cls: 'output-success' },
+        { text: 'Source: Uniswap V3 spot (Base)', cls: 'output-info' },
+      ],
+
+      status: () => [
+        { text: 'YOUR ACTIVE BETS:', cls: 'output-info' },
+        { text: '#41  BNKR LONG  $100.00  settles 15:00 UTC', cls: 'output-success' },
+        { text: '     strike: $0.0234  now: $0.0251 (+7.3%)  ▲ WINNING', cls: 'output-success' },
+        { text: '', cls: 'output-info' },
+        { text: 'YOUR HISTORY:', cls: 'output-info' },
+        { text: '#40  BNKR LONG  $100.00  WON  +$99.00', cls: 'output-success' },
+        { text: '#39  BNKR SHORT $50.00   LOST -$50.00', cls: 'output-error' },
+      ],
+
+      open: () => [
+        { text: 'OPEN BETS:', cls: 'output-info' },
+        { text: '#42  LONG   $50.00   expires 14:00 UTC  (0xA3..8f)', cls: 'output-success' },
+        { text: '#43  SHORT  $25.00   expires 14:30 UTC  (0x7F..2d)', cls: 'output-warning' },
+        { text: '#44  LONG   $100.00  expires 15:00 UTC  (0xB1..c9)', cls: 'output-success' },
+      ],
+
+      clear: () => {
+        output.innerHTML = '';
+        return [];
+      },
+    };
+
+    function processCreate(args) {
+      const parts = args.trim().split(/\s+/);
+      if (parts.length < 2) {
+        return [{ text: '✗ Usage: create <long|short> <amount>', cls: 'output-error' }];
+      }
+      const dir = parts[0].toUpperCase();
+      const amount = parseFloat(parts[1]);
+      if (dir !== 'LONG' && dir !== 'SHORT') {
+        return [{ text: '✗ Direction must be "long" or "short"', cls: 'output-error' }];
+      }
+      if (isNaN(amount) || amount < 1) {
+        return [{ text: '✗ Amount below min bet ($1)', cls: 'output-error' }];
+      }
+      if (amount > 100) {
+        return [{ text: `✗ Amount exceeds max bet ($100). You tried: $${amount.toFixed(2)}`, cls: 'output-error' }];
+      }
+      const betId = 45 + Math.floor(Math.random() * 10);
+      return [
+        { text: `⚠ Create ${dir} bet on BNKR for $${amount.toFixed(2)} USDC?`, cls: 'output-warning' },
+        { text: `  Strike price: $0.0251 (current spot)`, cls: 'output-info' },
+        { text: `  Expires: ${new Date(Date.now() + 3600000).toISOString().slice(11,16)} UTC (1 hour)`, cls: 'output-info' },
+        { text: `  [demo mode — no transaction sent]`, cls: 'output-info' },
+        { text: `✓ Bet #${betId} created (simulated)`, cls: 'output-success' },
+      ];
+    }
+
+    function processCommand(cmd) {
+      const trimmed = cmd.trim().toLowerCase();
+      if (!trimmed) return;
+
+      // Echo the command
+      const echo = document.createElement('div');
+      echo.className = 'output-line';
+      echo.style.color = 'var(--green-muted)';
+      echo.textContent = `> ${cmd}`;
+      output.appendChild(echo);
+
+      let lines = [];
+
+      if (COMMANDS[trimmed]) {
+        const result = COMMANDS[trimmed]();
+        if (Array.isArray(result)) lines = result;
+      } else if (trimmed.startsWith('create ')) {
+        lines = processCreate(trimmed.slice(7));
+      } else if (trimmed.startsWith('take ')) {
+        const id = trimmed.slice(5).trim();
+        lines = [
+          { text: `⚠ Take opposite side of Bet #${id}? [demo mode]`, cls: 'output-warning' },
+          { text: `✓ Bet #${id} matched (simulated)`, cls: 'output-success' },
+        ];
+      } else if (trimmed.startsWith('settle ')) {
+        const id = trimmed.slice(7).trim();
+        lines = [
+          { text: `⏳ Reading settlement price...`, cls: 'output-info' },
+          { text: `✓ Bet #${id} settled — [demo mode]`, cls: 'output-success' },
+        ];
+      } else if (trimmed.startsWith('cancel ')) {
+        const id = trimmed.slice(7).trim();
+        lines = [
+          { text: `✓ Bet #${id} cancelled — USDC returned (simulated)`, cls: 'output-success' },
+        ];
+      } else if (trimmed === 'exit') {
+        lines = [{ text: 'Goodbye.', cls: 'output-info' }];
+      } else {
+        lines = [
+          { text: `✗ Unknown command: '${trimmed}'`, cls: 'output-error' },
+          { text: `  Type 'help' for available commands.`, cls: 'output-info' },
+        ];
+      }
+
+      lines.forEach(line => {
+        const el = document.createElement('div');
+        el.className = `output-line ${line.cls}`;
+        el.textContent = line.text;
+        output.appendChild(el);
+      });
+
+      output.scrollTop = output.scrollHeight;
+    }
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        processCommand(input.value);
+        input.value = '';
+      }
+    });
+
+    // Focus input on any click
+    document.addEventListener('click', () => input.focus());
+  </script>
+</body>
+</html>
