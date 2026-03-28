@@ -82,7 +82,7 @@ contract BankrBets is ReentrancyGuard {
     bool public immutable bnkrIsToken0;
 
     // ── State ──────────────────────────────────────────────────
-    uint256 public protocolFeeBps = 100;  // 1%
+    uint256 public constant PROTOCOL_FEE_BPS = 100;  // 1%
     uint256 public accumulatedFees;
     uint256 public nextBetId = 1;
     mapping(uint256 => Bet) public bets;
@@ -183,7 +183,7 @@ contract BankrBets is ReentrancyGuard {
 
     /// @notice Take the opposite side of an open bet
     /// @param betId The bet to take
-    function takeBet(uint256 betId) external onlyRegistered {
+    function takeBet(uint256 betId) external onlyRegistered nonReentrant {
         Bet storage bet = bets[betId];
         if (bet.creator == address(0)) revert BetNotFound();
         if (bet.status != Status.OPEN) revert BetNotOpen();
@@ -213,7 +213,7 @@ contract BankrBets is ReentrancyGuard {
         int24 settlementTick = _getTwapTick();
 
         uint256 pot = bet.amount * 2;
-        uint256 fee = (pot * protocolFeeBps) / 10000;
+        uint256 fee = (pot * PROTOCOL_FEE_BPS) / 10000;
         uint256 payout = pot - fee;
         accumulatedFees += fee;
 
@@ -255,7 +255,7 @@ contract BankrBets is ReentrancyGuard {
 
     /// @notice Cancel an unmatched bet. Only creator, only if OPEN.
     /// @param betId The bet to cancel
-    function cancelBet(uint256 betId) external {
+    function cancelBet(uint256 betId) external nonReentrant {
         Bet storage bet = bets[betId];
         if (bet.creator == address(0)) revert BetNotFound();
         if (bet.status == Status.CANCELLED) revert BetAlreadyCancelled();
@@ -278,7 +278,7 @@ contract BankrBets is ReentrancyGuard {
         if (block.timestamp <= bet.expiry + SETTLEMENT_DEADLINE) revert BetNotExpired();
 
         uint256 pot = bet.amount * 2;
-        uint256 fee = (pot * protocolFeeBps) / 10000;
+        uint256 fee = (pot * PROTOCOL_FEE_BPS) / 10000;
         uint256 refundPerSide = (pot - fee) / 2;
         uint256 dust = (pot - fee) - (refundPerSide * 2);
         accumulatedFees += fee + dust;
@@ -365,10 +365,6 @@ contract BankrBets is ReentrancyGuard {
     ///      V0: balanceOf check with ownerOf fallback for known IDs.
     ///      Production: use proper enumeration or off-chain attestation.
     function _isRegistered(address addr) internal view returns (bool) {
-        return _checkRegistry(addr);
-    }
-
-    function _checkRegistry(address addr) internal view returns (bool) {
         // Try ownerOf for known agent IDs
         // This is a V0 implementation — on mainnet, use proper enumeration
         (bool success, bytes memory data) = address(registry).staticcall(
