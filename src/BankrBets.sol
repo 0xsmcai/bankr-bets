@@ -153,6 +153,7 @@ contract BankrBets is ReentrancyGuard {
     function createBet(Direction direction, uint256 amount)
         external
         onlyRegistered
+        nonReentrant
         returns (uint256 betId)
     {
         if (amount < MIN_BET) revert BetAmountTooLow();
@@ -290,7 +291,7 @@ contract BankrBets is ReentrancyGuard {
     }
 
     /// @notice Withdraw accumulated protocol fees
-    function withdrawFees() external {
+    function withdrawFees() external nonReentrant {
         uint256 amount = accumulatedFees;
         if (amount == 0) revert NoFeesToWithdraw();
         accumulatedFees = 0;
