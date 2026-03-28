@@ -72,6 +72,7 @@ contract BankrBets is ReentrancyGuard {
     uint256 public constant MIN_BET = 1e6;         // 1 USDC
     uint256 public constant EXPIRY_DURATION = 1 hours;
     uint32 public constant TWAP_WINDOW = 30 minutes;
+    uint256 public constant SETTLEMENT_DEADLINE = 2 hours; // max time after expiry to settle
 
     // ── Immutables ─────────────────────────────────────────────
     IERC20 public immutable usdc;
@@ -114,6 +115,9 @@ contract BankrBets is ReentrancyGuard {
     error OnlyCreatorCanCancel();
     error TransferFailed();
     error NoFeesToWithdraw();
+    error BetExpired();
+    error SettlementWindowExpired();
+    error InvalidConstructorAddress();
 
     // ── Constructor ────────────────────────────────────────────
     constructor(
@@ -123,6 +127,10 @@ contract BankrBets is ReentrancyGuard {
         address _feeRecipient,
         bool _bnkrIsToken0
     ) {
+        if (_usdc == address(0)) revert InvalidConstructorAddress();
+        if (_registry == address(0)) revert InvalidConstructorAddress();
+        if (_bnkrPool == address(0)) revert InvalidConstructorAddress();
+        if (_feeRecipient == address(0)) revert InvalidConstructorAddress();
         usdc = IERC20(_usdc);
         registry = IIdentityRegistry(_registry);
         bnkrPool = IUniswapV3Pool(_bnkrPool);
@@ -150,8 +158,9 @@ contract BankrBets is ReentrancyGuard {
         if (amount < MIN_BET) revert BetAmountTooLow();
         if (amount > MAX_BET) revert BetAmountTooHigh();
 
-        // Get current tick as strike (spot is fine for creation — creator controls timing)
-        (, int24 currentTick,,,,, ) = bnkrPool.slot0();
+        // Use TWAP tick as strike for oracle consistency with settlement
+        // Prevents single-block spot manipulation at creation time
+        int24 currentTick = _getTwapTick();
 
         betId = nextBetId++;
         uint256 expiry = block.timestamp + EXPIRY_DURATION;
@@ -178,6 +187,7 @@ contract BankrBets is ReentrancyGuard {
         Bet storage bet = bets[betId];
         if (bet.creator == address(0)) revert BetNotFound();
         if (bet.status != Status.OPEN) revert BetNotOpen();
+        if (block.timestamp >= bet.expiry) revert BetExpired();
         if (msg.sender == bet.creator) revert CannotTakeOwnBet();
 
         bet.taker = msg.sender;
@@ -197,6 +207,7 @@ contract BankrBets is ReentrancyGuard {
         if (bet.status == Status.CANCELLED) revert BetAlreadyCancelled();
         if (bet.status != Status.ACTIVE) revert BetNotActive();
         if (block.timestamp < bet.expiry) revert BetNotExpired();
+        if (block.timestamp > bet.expiry + SETTLEMENT_DEADLINE) revert SettlementWindowExpired();
 
         // Read TWAP tick — resistant to flash-loan manipulation
         int24 settlementTick = _getTwapTick();
@@ -209,6 +220,8 @@ contract BankrBets is ReentrancyGuard {
         if (settlementTick == bet.strikeTick) {
             // Draw — exact same tick, return stakes minus fee split
             uint256 halfPayout = payout / 2;
+            uint256 dust = payout - (halfPayout * 2);
+            accumulatedFees += dust; // recover truncation dust
             bet.status = Status.SETTLED;
             bet.winner = address(0); // draw
             if (!usdc.transfer(bet.creator, halfPayout)) revert TransferFailed();
@@ -253,6 +266,26 @@ contract BankrBets is ReentrancyGuard {
 
         if (!usdc.transfer(bet.creator, bet.amount)) revert TransferFailed();
 
+        emit BetCancelled(betId);
+    }
+
+    /// @notice Emergency refund for active bets that passed the settlement deadline
+    ///         (e.g., TWAP oracle failure). Returns stakes to both parties minus fee.
+    function emergencyRefund(uint256 betId) external nonReentrant {
+        Bet storage bet = bets[betId];
+        if (bet.creator == address(0)) revert BetNotFound();
+        if (bet.status != Status.ACTIVE) revert BetNotActive();
+        if (block.timestamp <= bet.expiry + SETTLEMENT_DEADLINE) revert BetNotExpired();
+
+        uint256 pot = bet.amount * 2;
+        uint256 fee = (pot * protocolFeeBps) / 10000;
+        uint256 refundPerSide = (pot - fee) / 2;
+        uint256 dust = (pot - fee) - (refundPerSide * 2);
+        accumulatedFees += fee + dust;
+
+        bet.status = Status.CANCELLED;
+        if (!usdc.transfer(bet.creator, refundPerSide)) revert TransferFailed();
+        if (!usdc.transfer(bet.taker, refundPerSide)) revert TransferFailed();
         emit BetCancelled(betId);
     }
 
