@@ -592,6 +592,77 @@ contract BankrBetsTest is Test {
         assertEq(usdc.balanceOf(agentB) - balBefore, 99e6);
     }
 
+    function test_takeBet_revertIfTakeWindowExpired() public {
+        vm.prank(agentA);
+        uint256 betId = market.createBet(BankrBets.Direction.LONG, 50e6);
+
+        // Warp past the take window (50 min) but before expiry (60 min)
+        vm.warp(block.timestamp + 51 minutes);
+
+        vm.prank(agentB);
+        vm.expectRevert(BankrBets.TakeWindowExpired.selector);
+        market.takeBet(betId);
+    }
+
+    function test_takeBet_withinTakeWindow() public {
+        vm.prank(agentA);
+        uint256 betId = market.createBet(BankrBets.Direction.LONG, 50e6);
+
+        // Warp to just inside the take window (49 min)
+        vm.warp(block.timestamp + 49 minutes);
+
+        vm.prank(agentB);
+        market.takeBet(betId);
+
+        (,address taker,,,,, BankrBets.Status status,) = market.getBet(betId);
+        assertEq(taker, agentB);
+        assertEq(uint8(status), uint8(BankrBets.Status.ACTIVE));
+    }
+
+    function test_takeBet_refreshesStrikeTick() public {
+        vm.prank(agentA);
+        uint256 betId = market.createBet(BankrBets.Direction.LONG, 50e6);
+
+        // Strike at creation is INITIAL_TICK
+        (,,,, int24 strikeBeforeTake,,,) = market.getBet(betId);
+        assertEq(strikeBeforeTake, INITIAL_TICK);
+
+        // Move TWAP tick, then take
+        _setTwapTick(INITIAL_TICK + 50);
+        vm.prank(agentB);
+        market.takeBet(betId);
+
+        // Strike should now be refreshed to the new TWAP
+        (,,,, int24 strikeAfterTake,,,) = market.getBet(betId);
+        assertEq(strikeAfterTake, INITIAL_TICK + 50);
+    }
+
+    function test_reclaimExpiredBet() public {
+        vm.prank(agentA);
+        uint256 betId = market.createBet(BankrBets.Direction.LONG, 50e6);
+
+        // Warp past expiry
+        vm.warp(block.timestamp + 1 hours + 1);
+
+        uint256 balBefore = usdc.balanceOf(agentA);
+        // Anyone can reclaim — call from agentB
+        vm.prank(agentB);
+        market.reclaimExpiredBet(betId);
+
+        // Funds returned to creator
+        assertEq(usdc.balanceOf(agentA) - balBefore, 50e6);
+        (,,,,,, BankrBets.Status status,) = market.getBet(betId);
+        assertEq(uint8(status), uint8(BankrBets.Status.CANCELLED));
+    }
+
+    function test_reclaimExpiredBet_revertIfNotExpired() public {
+        vm.prank(agentA);
+        uint256 betId = market.createBet(BankrBets.Direction.LONG, 50e6);
+
+        vm.expectRevert(BankrBets.BetNotExpired.selector);
+        market.reclaimExpiredBet(betId);
+    }
+
     function test_settle_negativeTwapTick() public {
         // Test with negative ticks
         pool.setTick(-500);

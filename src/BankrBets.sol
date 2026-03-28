@@ -73,6 +73,7 @@ contract BankrBets is ReentrancyGuard {
     uint256 public constant EXPIRY_DURATION = 1 hours;
     uint32 public constant TWAP_WINDOW = 30 minutes;
     uint256 public constant SETTLEMENT_DEADLINE = 2 hours; // max time after expiry to settle
+    uint256 public constant TAKE_WINDOW = 50 minutes;    // taker must accept within this window after creation
 
     // ── Immutables ─────────────────────────────────────────────
     IERC20 public immutable usdc;
@@ -116,8 +117,10 @@ contract BankrBets is ReentrancyGuard {
     error TransferFailed();
     error NoFeesToWithdraw();
     error BetExpired();
+    error TakeWindowExpired();
     error SettlementWindowExpired();
     error InvalidConstructorAddress();
+    error OracleUnavailable();
 
     // ── Constructor ────────────────────────────────────────────
     constructor(
@@ -183,14 +186,21 @@ contract BankrBets is ReentrancyGuard {
     }
 
     /// @notice Take the opposite side of an open bet
+    /// @dev Strike tick is refreshed to current TWAP on take to prevent stale-order sniping.
+    ///      Taker must accept within TAKE_WINDOW of bet creation (expiry - EXPIRY_DURATION + TAKE_WINDOW).
     /// @param betId The bet to take
     function takeBet(uint256 betId) external onlyRegistered nonReentrant {
         Bet storage bet = bets[betId];
         if (bet.creator == address(0)) revert BetNotFound();
         if (bet.status != Status.OPEN) revert BetNotOpen();
         if (block.timestamp >= bet.expiry) revert BetExpired();
+        // Prevent last-minute sniping: taker must act within TAKE_WINDOW of creation
+        uint256 creationTime = bet.expiry - EXPIRY_DURATION;
+        if (block.timestamp > creationTime + TAKE_WINDOW) revert TakeWindowExpired();
         if (msg.sender == bet.creator) revert CannotTakeOwnBet();
 
+        // Refresh strike tick to current TWAP — eliminates free option from stale strikes
+        bet.strikeTick = _getTwapTick();
         bet.taker = msg.sender;
         bet.status = Status.ACTIVE;
 
@@ -270,6 +280,19 @@ contract BankrBets is ReentrancyGuard {
         emit BetCancelled(betId);
     }
 
+    /// @notice Reclaim funds from an expired, unmatched bet. Anyone can call.
+    ///         Prevents permanent fund lock if the creator loses access.
+    function reclaimExpiredBet(uint256 betId) external nonReentrant {
+        Bet storage bet = bets[betId];
+        if (bet.creator == address(0)) revert BetNotFound();
+        if (bet.status != Status.OPEN) revert BetNotOpen();
+        if (block.timestamp < bet.expiry) revert BetNotExpired();
+
+        bet.status = Status.CANCELLED;
+        if (!usdc.transfer(bet.creator, bet.amount)) revert TransferFailed();
+        emit BetCancelled(betId);
+    }
+
     /// @notice Emergency refund for active bets that passed the settlement deadline
     ///         (e.g., TWAP oracle failure). Returns stakes to both parties minus fee.
     function emergencyRefund(uint256 betId) external nonReentrant {
@@ -343,12 +366,19 @@ contract BankrBets is ReentrancyGuard {
 
     /// @dev Compute 30-minute TWAP tick from Uniswap V3 pool.
     ///      Resistant to flash-loan oracle manipulation.
+    ///      Reverts with OracleUnavailable if the pool lacks sufficient observation history.
     function _getTwapTick() internal view returns (int24) {
         uint32[] memory secondsAgos = new uint32[](2);
         secondsAgos[0] = TWAP_WINDOW;
         secondsAgos[1] = 0;
 
-        (int56[] memory tickCumulatives, ) = bnkrPool.observe(secondsAgos);
+        // Wrap observe() to surface a clear error when oracle history is insufficient
+        (bool success, bytes memory returnData) = address(bnkrPool).staticcall(
+            abi.encodeWithSelector(IUniswapV3Pool.observe.selector, secondsAgos)
+        );
+        if (!success) revert OracleUnavailable();
+
+        (int56[] memory tickCumulatives, ) = abi.decode(returnData, (int56[], uint160[]));
 
         int56 tickDiff = tickCumulatives[1] - tickCumulatives[0];
         int56 window = int56(uint56(TWAP_WINDOW));
@@ -362,26 +392,28 @@ contract BankrBets is ReentrancyGuard {
         return averageTick;
     }
 
-    /// @dev Check if address is a registered ERC-8004 agent
-    ///      V0: balanceOf check with ownerOf fallback for known IDs.
+    /// @dev Check if address is a registered ERC-8004 agent.
+    ///      V0: balanceOf check with ownerOf fallback.
     ///      Production: use proper enumeration or off-chain attestation.
     function _isRegistered(address addr) internal view returns (bool) {
-        // Try ownerOf for known agent IDs
-        // This is a V0 implementation — on mainnet, use proper enumeration
+        // Primary: try balanceOf(address) — works if registry is ERC-721-like
         (bool success, bytes memory data) = address(registry).staticcall(
             abi.encodeWithSignature("balanceOf(address)", addr)
         );
         if (success && data.length >= 32) {
             uint256 balance = abi.decode(data, (uint256));
-            return balance > 0;
+            if (balance > 0) return true;
         }
 
-        // Fallback: check if address is owner of any agent via ownerOf
-        // For V0 testing, check a few known IDs
-        for (uint256 i = 1; i <= 5; i++) {
+        // Fallback: check ownerOf for agent IDs up to a reasonable V0 range.
+        // Gas-bounded: max 100 iterations = ~200k gas worst case.
+        for (uint256 i = 1; i <= 100; i++) {
             try registry.ownerOf(i) returns (address owner) {
                 if (owner == addr) return true;
-            } catch {}
+            } catch {
+                // ID doesn't exist — stop scanning (IDs are sequential)
+                break;
+            }
         }
         return false;
     }
