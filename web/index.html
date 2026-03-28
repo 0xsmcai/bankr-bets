@@ -297,6 +297,13 @@
       .bet-row { gap: 2px 8px; }
     }
 
+    @media (max-width: 360px) {
+      .cmd-row { flex-direction: column; gap: 0; }
+      .cmd-name { min-width: unset; }
+      .cmd-desc { padding-left: 16px; font-size: 11px; }
+      .header .meta { font-size: 10px; }
+    }
+
     /* ── Alerts ─────────────────────────────── */
     .alert {
       padding: 6px 12px;
@@ -554,25 +561,39 @@
       if (COMMANDS[trimmed]) {
         const result = COMMANDS[trimmed]();
         if (Array.isArray(result)) lines = result;
+      } else if (trimmed === 'create') {
+        lines = [{ text: '✗ Usage: create <long|short> <amount>', cls: 'output-error' }];
       } else if (trimmed.startsWith('create ')) {
         lines = processCreate(trimmed.slice(7));
       } else if (trimmed.startsWith('take ')) {
         const id = trimmed.slice(5).trim();
-        lines = [
-          { text: `⚠ Take opposite side of Bet #${id}? [demo mode]`, cls: 'output-warning' },
-          { text: `✓ Bet #${id} matched (simulated)`, cls: 'output-success' },
-        ];
+        if (!id || isNaN(Number(id))) {
+          lines = [{ text: '✗ Usage: take <betId> (numeric ID)', cls: 'output-error' }];
+        } else {
+          lines = [
+            { text: `⚠ Take opposite side of Bet #${id}? [demo mode]`, cls: 'output-warning' },
+            { text: `✓ Bet #${id} matched (simulated)`, cls: 'output-success' },
+          ];
+        }
       } else if (trimmed.startsWith('settle ')) {
         const id = trimmed.slice(7).trim();
-        lines = [
-          { text: `⏳ Reading settlement price...`, cls: 'output-info' },
-          { text: `✓ Bet #${id} settled — [demo mode]`, cls: 'output-success' },
-        ];
+        if (!id || isNaN(Number(id))) {
+          lines = [{ text: '✗ Usage: settle <betId> (numeric ID)', cls: 'output-error' }];
+        } else {
+          lines = [
+            { text: `⏳ Reading settlement price...`, cls: 'output-info' },
+            { text: `✓ Bet #${id} settled — [demo mode]`, cls: 'output-success' },
+          ];
+        }
       } else if (trimmed.startsWith('cancel ')) {
         const id = trimmed.slice(7).trim();
-        lines = [
-          { text: `✓ Bet #${id} cancelled — USDC returned (simulated)`, cls: 'output-success' },
-        ];
+        if (!id || isNaN(Number(id))) {
+          lines = [{ text: '✗ Usage: cancel <betId> (numeric ID)', cls: 'output-error' }];
+        } else {
+          lines = [
+            { text: `✓ Bet #${id} cancelled — USDC returned (simulated)`, cls: 'output-success' },
+          ];
+        }
       } else if (trimmed === 'exit') {
         lines = [{ text: 'Goodbye.', cls: 'output-info' }];
       } else {
