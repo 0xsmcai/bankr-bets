@@ -59,12 +59,21 @@ contract MockRegistry {
     }
 }
 
-/// @dev Mock V3 pool that returns configurable sqrtPriceX96
+/// @dev Mock V3 pool with configurable tick and TWAP support
 contract MockV3Pool {
-    uint160 public currentSqrtPriceX96;
+    int24 public currentTick;
+    int56 public tickCumulative0; // cumulative at (now - window)
+    int56 public tickCumulative1; // cumulative at now
 
-    function setPrice(uint160 _price) external {
-        currentSqrtPriceX96 = _price;
+    function setTick(int24 _tick) external {
+        currentTick = _tick;
+    }
+
+    /// @dev Set tick cumulatives for TWAP calculation.
+    ///      TWAP tick = (cumulative1 - cumulative0) / window
+    function setTickCumulatives(int56 _cum0, int56 _cum1) external {
+        tickCumulative0 = _cum0;
+        tickCumulative1 = _cum1;
     }
 
     function slot0()
@@ -80,7 +89,21 @@ contract MockV3Pool {
             bool unlocked
         )
     {
-        return (currentSqrtPriceX96, 0, 0, 0, 0, 0, true);
+        return (0, currentTick, 0, 0, 0, 0, true);
+    }
+
+    function observe(uint32[] calldata)
+        external
+        view
+        returns (int56[] memory tickCumulatives, uint160[] memory secondsPerLiquidityCumulativeX128s)
+    {
+        tickCumulatives = new int56[](2);
+        tickCumulatives[0] = tickCumulative0;
+        tickCumulatives[1] = tickCumulative1;
+
+        secondsPerLiquidityCumulativeX128s = new uint160[](2);
+        secondsPerLiquidityCumulativeX128s[0] = 0;
+        secondsPerLiquidityCumulativeX128s[1] = 0;
     }
 }
 
@@ -95,14 +118,18 @@ contract BankrBetsTest is Test {
     address public nonAgent = makeAddr("nonAgent");
     address public feeRecipient = makeAddr("feeRecipient");
 
-    uint160 constant INITIAL_PRICE = 1000000 * 2**96; // arbitrary sqrtPriceX96
+    int24 constant INITIAL_TICK = 1000;
+    uint32 constant TWAP_WINDOW = 30 minutes;
 
     function setUp() public {
         usdc = new MockUSDC();
         registry = new MockRegistry();
         pool = new MockV3Pool();
 
-        pool.setPrice(INITIAL_PRICE);
+        pool.setTick(INITIAL_TICK);
+        // Set TWAP cumulatives so TWAP tick = INITIAL_TICK
+        // TWAP = (cum1 - cum0) / window => cum1 - cum0 = INITIAL_TICK * window
+        _setTwapTick(INITIAL_TICK);
 
         market = new BankrBets(
             address(usdc),
@@ -126,6 +153,13 @@ contract BankrBetsTest is Test {
         usdc.approve(address(market), type(uint256).max);
     }
 
+    /// @dev Helper to set mock TWAP tick
+    function _setTwapTick(int24 tick) internal {
+        int56 cum0 = 0;
+        int56 cum1 = int56(tick) * int56(uint56(TWAP_WINDOW));
+        pool.setTickCumulatives(cum0, cum1);
+    }
+
     // ── Create Bet Tests ──────────────────────────────────────
 
     function test_createBet() public {
@@ -136,14 +170,14 @@ contract BankrBetsTest is Test {
         (
             address creator,,,
             uint256 amount,
-            uint160 strikePrice,
+            int24 strikeTick,
             uint256 expiry,
             BankrBets.Status status,
         ) = market.getBet(betId);
 
         assertEq(creator, agentA);
         assertEq(amount, 50e6);
-        assertEq(strikePrice, INITIAL_PRICE);
+        assertEq(strikeTick, INITIAL_TICK);
         assertEq(expiry, block.timestamp + 1 hours);
         assertEq(uint8(status), uint8(BankrBets.Status.OPEN));
         assertEq(usdc.balanceOf(address(market)), 50e6);
@@ -213,15 +247,15 @@ contract BankrBetsTest is Test {
     // ── Settlement Tests ──────────────────────────────────────
 
     function test_settle_longWins() public {
-        // Agent A goes LONG, price goes up -> Agent A wins
+        // Agent A goes LONG, TWAP tick goes up -> Agent A wins
         vm.prank(agentA);
         uint256 betId = market.createBet(BankrBets.Direction.LONG, 50e6);
 
         vm.prank(agentB);
         market.takeBet(betId);
 
-        // Price goes UP (bnkrIsToken0 = true, so higher sqrtPriceX96 = BNKR up)
-        pool.setPrice(INITIAL_PRICE + 1000);
+        // TWAP tick goes UP (bnkrIsToken0 = true, so higher tick = BNKR up)
+        _setTwapTick(INITIAL_TICK + 100);
 
         // Fast forward past expiry
         vm.warp(block.timestamp + 1 hours + 1);
@@ -235,15 +269,15 @@ contract BankrBetsTest is Test {
     }
 
     function test_settle_shortWins() public {
-        // Agent A goes SHORT, price goes down -> Agent A wins
+        // Agent A goes SHORT, TWAP tick goes down -> Agent A wins
         vm.prank(agentA);
         uint256 betId = market.createBet(BankrBets.Direction.SHORT, 50e6);
 
         vm.prank(agentB);
         market.takeBet(betId);
 
-        // Price goes DOWN
-        pool.setPrice(INITIAL_PRICE - 1000);
+        // TWAP tick goes DOWN
+        _setTwapTick(INITIAL_TICK - 100);
 
         vm.warp(block.timestamp + 1 hours + 1);
 
@@ -254,15 +288,15 @@ contract BankrBetsTest is Test {
     }
 
     function test_settle_takerWins() public {
-        // Agent A goes LONG, price goes DOWN -> Agent B (taker, SHORT) wins
+        // Agent A goes LONG, TWAP tick goes DOWN -> Agent B (taker, SHORT) wins
         vm.prank(agentA);
         uint256 betId = market.createBet(BankrBets.Direction.LONG, 50e6);
 
         vm.prank(agentB);
         market.takeBet(betId);
 
-        // Price goes DOWN
-        pool.setPrice(INITIAL_PRICE - 1000);
+        // TWAP tick goes DOWN
+        _setTwapTick(INITIAL_TICK - 100);
 
         vm.warp(block.timestamp + 1 hours + 1);
 
@@ -279,7 +313,7 @@ contract BankrBetsTest is Test {
         vm.prank(agentB);
         market.takeBet(betId);
 
-        // Price stays the same
+        // TWAP tick stays the same
         vm.warp(block.timestamp + 1 hours + 1);
 
         uint256 balABefore = usdc.balanceOf(agentA);
@@ -356,7 +390,7 @@ contract BankrBetsTest is Test {
         uint256 betId = market.createBet(BankrBets.Direction.LONG, 50e6);
         vm.prank(agentB);
         market.takeBet(betId);
-        pool.setPrice(INITIAL_PRICE + 1000);
+        _setTwapTick(INITIAL_TICK + 100);
         vm.warp(block.timestamp + 1 hours + 1);
         market.settle(betId);
 
@@ -396,9 +430,9 @@ contract BankrBetsTest is Test {
         vm.prank(agentB);
         invertedMarket.takeBet(betId);
 
-        // When bnkrIsToken0 = false, LOWER sqrtPriceX96 = BNKR price UP
-        // So decreasing price means LONG wins
-        pool.setPrice(INITIAL_PRICE - 1000);
+        // When bnkrIsToken0 = false, LOWER tick = BNKR price UP
+        // So decreasing tick means LONG wins
+        _setTwapTick(INITIAL_TICK - 100);
         vm.warp(block.timestamp + 1 hours + 1);
 
         uint256 balBefore = usdc.balanceOf(agentA);
@@ -435,8 +469,62 @@ contract BankrBetsTest is Test {
         assertEq(market.nextBetId(), 3);
     }
 
-    function test_getCurrentPrice() public view {
-        uint160 price = market.getCurrentPrice();
-        assertEq(price, INITIAL_PRICE);
+    function test_getCurrentTick() public view {
+        int24 tick = market.getCurrentTick();
+        assertEq(tick, INITIAL_TICK);
+    }
+
+    function test_getSettlementTick() public {
+        _setTwapTick(INITIAL_TICK + 50);
+        int24 twapTick = market.getSettlementTick();
+        assertEq(twapTick, INITIAL_TICK + 50);
+    }
+
+    // ── TWAP-specific Tests ────────────────────────────────────
+
+    function test_settle_usesTwapNotSpot() public {
+        // Verify that settlement uses TWAP, not spot price.
+        // Set spot tick high (simulating flash loan) but TWAP tick low.
+        vm.prank(agentA);
+        uint256 betId = market.createBet(BankrBets.Direction.LONG, 50e6);
+
+        vm.prank(agentB);
+        market.takeBet(betId);
+
+        // Spot tick goes way UP (flash loan manipulation)
+        pool.setTick(INITIAL_TICK + 10000);
+        // But TWAP tick goes DOWN (real market movement)
+        _setTwapTick(INITIAL_TICK - 100);
+
+        vm.warp(block.timestamp + 1 hours + 1);
+
+        // LONG should LOSE because TWAP went down, despite spot going up
+        uint256 balBefore = usdc.balanceOf(agentB);
+        market.settle(betId);
+
+        // Agent B (SHORT taker) wins
+        assertEq(usdc.balanceOf(agentB) - balBefore, 99e6);
+    }
+
+    function test_settle_negativeTwapTick() public {
+        // Test with negative ticks
+        pool.setTick(-500);
+        _setTwapTick(-500);
+
+        vm.prank(agentA);
+        uint256 betId = market.createBet(BankrBets.Direction.LONG, 50e6);
+
+        vm.prank(agentB);
+        market.takeBet(betId);
+
+        // TWAP tick goes further negative (price down)
+        _setTwapTick(-600);
+
+        vm.warp(block.timestamp + 1 hours + 1);
+
+        // SHORT (taker) wins
+        uint256 balBefore = usdc.balanceOf(agentB);
+        market.settle(betId);
+        assertEq(usdc.balanceOf(agentB) - balBefore, 99e6);
     }
 }

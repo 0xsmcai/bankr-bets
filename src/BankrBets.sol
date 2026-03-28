@@ -4,7 +4,7 @@ pragma solidity ^0.8.26;
 /// @title BankrBets — P2P Binary Prediction Market for AI Agents
 /// @notice ERC-8004 gated. Agents bet USDC on Bankr token price direction.
 /// @dev V0: BNKR only, 1-hour expiry, 50/50 odds, $100 max bet.
-///      Settlement via Uniswap V3 spot price (BNKR/WETH pool).
+///      Settlement via Uniswap V3 TWAP (30-min window, flash-loan resistant).
 
 interface IERC20 {
     function transferFrom(address from, address to, uint256 amount) external returns (bool);
@@ -30,6 +30,11 @@ interface IUniswapV3Pool {
             uint8 feeProtocol,
             bool unlocked
         );
+
+    function observe(uint32[] calldata secondsAgos)
+        external
+        view
+        returns (int56[] memory tickCumulatives, uint160[] memory secondsPerLiquidityCumulativeX128s);
 }
 
 /// @dev Minimal reentrancy guard inlined to avoid external dependency
@@ -56,7 +61,7 @@ contract BankrBets is ReentrancyGuard {
         address taker;
         Direction creatorDirection;
         uint256 amount;
-        uint160 strikePrice;    // sqrtPriceX96 at creation
+        int24 strikeTick;       // Uniswap V3 tick at creation
         uint256 expiry;
         Status status;
         address winner;
@@ -66,6 +71,7 @@ contract BankrBets is ReentrancyGuard {
     uint256 public constant MAX_BET = 100e6;       // 100 USDC (6 decimals)
     uint256 public constant MIN_BET = 1e6;         // 1 USDC
     uint256 public constant EXPIRY_DURATION = 1 hours;
+    uint32 public constant TWAP_WINDOW = 30 minutes;
 
     // ── Immutables ─────────────────────────────────────────────
     IERC20 public immutable usdc;
@@ -86,11 +92,11 @@ contract BankrBets is ReentrancyGuard {
         address indexed creator,
         Direction direction,
         uint256 amount,
-        uint160 strikePrice,
+        int24 strikeTick,
         uint256 expiry
     );
     event BetTaken(uint256 indexed betId, address indexed taker);
-    event BetSettled(uint256 indexed betId, address indexed winner, uint256 payout, uint160 settlementPrice);
+    event BetSettled(uint256 indexed betId, address indexed winner, uint256 payout, int24 settlementTick);
     event BetCancelled(uint256 indexed betId);
     event FeesWithdrawn(address indexed to, uint256 amount);
 
@@ -144,8 +150,8 @@ contract BankrBets is ReentrancyGuard {
         if (amount < MIN_BET) revert BetAmountTooLow();
         if (amount > MAX_BET) revert BetAmountTooHigh();
 
-        // Get current spot price as strike
-        (uint160 strikePrice,,,,,, ) = bnkrPool.slot0();
+        // Get current tick as strike (spot is fine for creation — creator controls timing)
+        (, int24 currentTick,,,,, ) = bnkrPool.slot0();
 
         betId = nextBetId++;
         uint256 expiry = block.timestamp + EXPIRY_DURATION;
@@ -155,7 +161,7 @@ contract BankrBets is ReentrancyGuard {
             taker: address(0),
             creatorDirection: direction,
             amount: amount,
-            strikePrice: strikePrice,
+            strikeTick: currentTick,
             expiry: expiry,
             status: Status.OPEN,
             winner: address(0)
@@ -163,7 +169,7 @@ contract BankrBets is ReentrancyGuard {
 
         if (!usdc.transferFrom(msg.sender, address(this), amount)) revert TransferFailed();
 
-        emit BetCreated(betId, msg.sender, direction, amount, strikePrice, expiry);
+        emit BetCreated(betId, msg.sender, direction, amount, currentTick, expiry);
     }
 
     /// @notice Take the opposite side of an open bet
@@ -192,33 +198,32 @@ contract BankrBets is ReentrancyGuard {
         if (bet.status != Status.ACTIVE) revert BetNotActive();
         if (block.timestamp < bet.expiry) revert BetNotExpired();
 
-        // Read current V3 spot price
-        (uint160 currentPrice,,,,,, ) = bnkrPool.slot0();
+        // Read TWAP tick — resistant to flash-loan manipulation
+        int24 settlementTick = _getTwapTick();
 
         uint256 pot = bet.amount * 2;
         uint256 fee = (pot * protocolFeeBps) / 10000;
         uint256 payout = pot - fee;
         accumulatedFees += fee;
 
-        if (currentPrice == bet.strikePrice) {
-            // Draw — exact same price, return stakes minus fee split
+        if (settlementTick == bet.strikeTick) {
+            // Draw — exact same tick, return stakes minus fee split
             uint256 halfPayout = payout / 2;
             bet.status = Status.SETTLED;
             bet.winner = address(0); // draw
             if (!usdc.transfer(bet.creator, halfPayout)) revert TransferFailed();
             if (!usdc.transfer(bet.taker, halfPayout)) revert TransferFailed();
-            emit BetSettled(betId, address(0), halfPayout, currentPrice);
+            emit BetSettled(betId, address(0), halfPayout, settlementTick);
             return;
         }
 
         // Determine if BNKR price went up
-        // If bnkrIsToken0: higher sqrtPriceX96 = higher token1/token0 = higher WETH/BNKR... wait
-        // sqrtPriceX96 = sqrt(token1/token0) * 2^96
-        // If BNKR is token0: sqrtPriceX96 = sqrt(WETH/BNKR) — higher means more WETH per BNKR = BNKR UP
-        // If BNKR is token1: sqrtPriceX96 = sqrt(BNKR/WETH) — higher means more BNKR per WETH = BNKR DOWN
+        // Tick represents log1.0001(token1/token0)
+        // If BNKR is token0: higher tick = more token1 per token0 = more WETH per BNKR = BNKR UP
+        // If BNKR is token1: higher tick = more BNKR per WETH = BNKR DOWN
         bool priceWentUp = bnkrIsToken0
-            ? (currentPrice > bet.strikePrice)
-            : (currentPrice < bet.strikePrice);
+            ? (settlementTick > bet.strikeTick)
+            : (settlementTick < bet.strikeTick);
 
         address winner;
         if (priceWentUp) {
@@ -232,7 +237,7 @@ contract BankrBets is ReentrancyGuard {
 
         if (!usdc.transfer(winner, payout)) revert TransferFailed();
 
-        emit BetSettled(betId, winner, payout, currentPrice);
+        emit BetSettled(betId, winner, payout, settlementTick);
     }
 
     /// @notice Cancel an unmatched bet. Only creator, only if OPEN.
@@ -262,9 +267,14 @@ contract BankrBets is ReentrancyGuard {
 
     // ── View Functions ─────────────────────────────────────────
 
-    /// @notice Get current BNKR spot price from V3 pool
-    function getCurrentPrice() external view returns (uint160 sqrtPriceX96) {
-        (sqrtPriceX96,,,,,, ) = bnkrPool.slot0();
+    /// @notice Get current BNKR spot tick from V3 pool
+    function getCurrentTick() external view returns (int24 tick) {
+        (, tick,,,,, ) = bnkrPool.slot0();
+    }
+
+    /// @notice Get TWAP tick used for settlement
+    function getSettlementTick() external view returns (int24) {
+        return _getTwapTick();
     }
 
     /// @notice Get full bet details
@@ -276,7 +286,7 @@ contract BankrBets is ReentrancyGuard {
             address taker,
             Direction creatorDirection,
             uint256 amount,
-            uint160 strikePrice,
+            int24 strikeTick,
             uint256 expiry,
             Status status,
             address winner
@@ -288,7 +298,7 @@ contract BankrBets is ReentrancyGuard {
             bet.taker,
             bet.creatorDirection,
             bet.amount,
-            bet.strikePrice,
+            bet.strikeTick,
             bet.expiry,
             bet.status,
             bet.winner
@@ -297,23 +307,31 @@ contract BankrBets is ReentrancyGuard {
 
     // ── Internal ───────────────────────────────────────────────
 
-    /// @dev Check if address is a registered ERC-8004 agent
-    ///      V0: tries ownerOf for a range of IDs. Simple but works.
-    ///      Production: use a proper enumeration or off-chain attestation.
-    function _isRegistered(address addr) internal view returns (bool) {
-        // Try to call ownerOf — if addr owns any agent, it's registered
-        // For V0 we do a simple try/catch on a known range
-        // A more robust approach would use a balanceOf-like check
-        try registry.ownerOf(0) returns (address) {
-            // Registry is callable, now check if addr is registered
-            // We use a low-level staticcall approach
-        } catch {
-            // Registry not available or no agent 0
+    /// @dev Compute 30-minute TWAP tick from Uniswap V3 pool.
+    ///      Resistant to flash-loan oracle manipulation.
+    function _getTwapTick() internal view returns (int24) {
+        uint32[] memory secondsAgos = new uint32[](2);
+        secondsAgos[0] = TWAP_WINDOW;
+        secondsAgos[1] = 0;
+
+        (int56[] memory tickCumulatives, ) = bnkrPool.observe(secondsAgos);
+
+        int56 tickDiff = tickCumulatives[1] - tickCumulatives[0];
+        int56 window = int56(uint56(TWAP_WINDOW));
+        int24 averageTick = int24(tickDiff / window);
+
+        // Round towards negative infinity (Uniswap convention)
+        if (tickDiff < 0 && (tickDiff % window != 0)) {
+            averageTick--;
         }
 
-        // V0 pragmatic approach: check if the address has code OR
-        // accept all addresses (with the modifier as a placeholder for mainnet)
-        // For testnet, we'll be permissive and check properly on mainnet
+        return averageTick;
+    }
+
+    /// @dev Check if address is a registered ERC-8004 agent
+    ///      V0: balanceOf check with ownerOf fallback for known IDs.
+    ///      Production: use proper enumeration or off-chain attestation.
+    function _isRegistered(address addr) internal view returns (bool) {
         return _checkRegistry(addr);
     }
 
