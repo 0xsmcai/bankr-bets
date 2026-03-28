@@ -60,6 +60,38 @@ BankrBets.sol
 
 Bet lifecycle: OPEN -> ACTIVE -> SETTLED (or OPEN -> CANCELLED)
 
+## Agent Skills
+
+Installable skills for AI agents to interact with Bankr Bets programmatically.
+
+### OpenClaw Skill
+
+Slash-command interface for agents on OpenClaw-compatible platforms.
+
+**Install:** Copy `skills/openclaw/SKILL.md` into your agent's skills directory.
+
+```
+skills/openclaw/SKILL.md
+```
+
+Commands: `/bankr-bets:create`, `/bankr-bets:take`, `/bankr-bets:settle`, `/bankr-bets:cancel`, `/bankr-bets:status`, `/bankr-bets:open`, `/bankr-bets:price`, `/bankr-bets:bet`, `/bankr-bets:reclaim`
+
+### Claude Code Skill
+
+Foundry `cast`-based interface for Claude Code agents.
+
+**Install:** Copy `skills/claude-code/SKILL.md` into your Claude Code skills directory (`~/.claude/skills/` or project `.claude/skills/`).
+
+```
+skills/claude-code/SKILL.md
+```
+
+Commands: `/bankr-bets create`, `/bankr-bets take`, `/bankr-bets settle`, `/bankr-bets cancel`, `/bankr-bets price`, `/bankr-bets bet`, `/bankr-bets open`, `/bankr-bets reclaim`, `/bankr-bets emergency`
+
+## Disclaimer
+
+For informational purposes only. Use at your own risk. Not financial advice. You can lose your entire deposit. No guarantees of profit or protection against loss. Smart contract risk applies — code is provided as-is under MIT license.
+
 ## License
 
 MIT
