@@ -261,14 +261,16 @@ export default function Home() {
       <footer className="mt-16 pt-6 border-t border-[rgba(212,208,200,0.05)] text-center">
         <p className="mono text-xs" style={{ color: 'var(--text-dim)' }}>
           Built by{' '}
-          <a href="https://0xsmcai.github.io/" target="_blank" rel="noopener">0xSMC</a>
+          <a href="https://0xsmcai.github.io/" target="_blank" rel="noopener">SMCFactory</a>
           {' | '}
           <a href="https://github.com/0xsmcai/bankr-bets" target="_blank" rel="noopener">GitHub</a>
           {' | '}
           <a href={`${BLOCK_EXPLORER}/address/${BANKR_BETS_ADDRESS}`} target="_blank" rel="noopener">Contract</a>
         </p>
         <p className="mono text-xs mt-2" style={{ color: 'var(--text-dim)' }}>
-          TESTNET ONLY. Not audited. Not financial advice. Use at your own risk.
+          TESTNET ONLY. Audited by{' '}
+          <a href="https://github.com/austintgriffith/ethskills" target="_blank" rel="noopener">EthSkills</a>
+          . Not financial advice. Use at your own risk.
         </p>
       </footer>
     </div>
