@@ -1,0 +1,15 @@
+{
+  "chain": "base-sepolia",
+  "chainId": 84532,
+  "rpc": "https://sepolia.base.org",
+  "blockExplorer": "https://base-sepolia.blockscout.com",
+  "contracts": {
+    "BankrBets": "0x51187AFB8477AdC06C0ba8DA4b2e1c905f7703A3",
+    "MockUSDC": "0x61373Fb7eaefb9463d1BaAF7b7c47ed0E68C26f6",
+    "MockRegistry": "0x8D36Bf33F9a56CBE72f9f101d5132b9dc37bC08F",
+    "DRBPool": "0x845141f093B09B3a4d95bbE53E09614EcaFaEE75",
+    "BNKRPool": "0x00f1901e5d12394647863c074d30b5e11448fEa1"
+  },
+  "deployer": "0x887DdEB7Fdf91C9A25ec3164cd1dffB964cD4773",
+  "deployedAt": "2026-04-01"
+}
