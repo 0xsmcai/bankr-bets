@@ -1,9 +1,0 @@
-1:"$Sreact.fragment"
-2:I[47257,["/bankr-bets/_next/static/chunks/10cedcur4rb0t.js","/bankr-bets/_next/static/chunks/0s-o.pie58ye1.js","/bankr-bets/_next/static/chunks/12--mep5_2bda.js","/bankr-bets/_next/static/chunks/0dbhjjzl8qfwv.js","/bankr-bets/_next/static/chunks/0_u70.8v-2ofm.js"],"ClientPageRoot"]
-3:I[52683,["/bankr-bets/_next/static/chunks/10cedcur4rb0t.js","/bankr-bets/_next/static/chunks/0s-o.pie58ye1.js","/bankr-bets/_next/static/chunks/12--mep5_2bda.js","/bankr-bets/_next/static/chunks/0dbhjjzl8qfwv.js","/bankr-bets/_next/static/chunks/0_u70.8v-2ofm.js","/bankr-bets/_next/static/chunks/00i2g1xv1af9m.js","/bankr-bets/_next/static/chunks/0cmwdx4q~a0gh.js","/bankr-bets/_next/static/chunks/05q~8e2sb7ofv.js"],"default"]
-6:I[97367,["/bankr-bets/_next/static/chunks/10cedcur4rb0t.js","/bankr-bets/_next/static/chunks/0s-o.pie58ye1.js","/bankr-bets/_next/static/chunks/12--mep5_2bda.js","/bankr-bets/_next/static/chunks/0dbhjjzl8qfwv.js","/bankr-bets/_next/static/chunks/0_u70.8v-2ofm.js"],"OutletBoundary"]
-7:"$Sreact.suspense"
-0:{"rsc":["$","$1","c",{"children":[["$","$L2",null,{"Component":"$3","serverProvidedParams":{"searchParams":{},"params":{},"promises":["$@4","$@5"]}}],[["$","script","script-0",{"src":"/bankr-bets/_next/static/chunks/00i2g1xv1af9m.js","async":true}],["$","script","script-1",{"src":"/bankr-bets/_next/static/chunks/0cmwdx4q~a0gh.js","async":true}],["$","script","script-2",{"src":"/bankr-bets/_next/static/chunks/05q~8e2sb7ofv.js","async":true}]],["$","$L6",null,{"children":["$","$7",null,{"name":"Next.MetadataOutlet","children":"$@8"}]}]]}],"isPartial":false,"staleTime":300,"varyParams":null,"buildId":"JjEPyt5sMiAsAX-a1ME9S"}
-4:{}
-5:"$0:rsc:props:children:0:props:serverProvidedParams:params"
-8:null
