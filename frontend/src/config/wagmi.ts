@@ -1,13 +1,14 @@
 import { http, createConfig } from 'wagmi'
 import { baseSepolia } from 'wagmi/chains'
-import { coinbaseWallet } from 'wagmi/connectors'
+import { coinbaseWallet, injected } from 'wagmi/connectors'
 
 export const config = createConfig({
   chains: [baseSepolia],
   connectors: [
+    injected(),
     coinbaseWallet({
       appName: 'Bankr Bets',
-      preference: { options: 'smartWalletOnly' },
+      preference: { options: 'all' },
     }),
   ],
   transports: {

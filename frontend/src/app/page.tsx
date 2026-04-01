@@ -391,7 +391,12 @@ export default function Home() {
 
       <TabNav active={tab} onChange={setTab} />
 
-      {marketCount === 0 ? (
+      {tab === 'portfolio' && !address ? (
+        <div className="text-center py-12 text-muted">
+          <p className="mono text-sm">CONNECT WALLET</p>
+          <p className="text-xs mt-2">Connect your wallet to see your bets.</p>
+        </div>
+      ) : marketCount === 0 ? (
         <div className="text-center py-12 text-muted">
           <p className="mono text-sm">NO MARKETS YET</p>
           <p className="text-xs mt-2">The keeper bot creates markets every hour. Check back soon.</p>
