@@ -191,13 +191,15 @@ function MarketCard({ marketId }: { marketId: bigint }) {
 
   useEffect(() => {
     if (approved && betSide !== null && betAmount) {
-      const amount = parseUnits(betAmount, 6)
-      placeBet({
-        address: BANKR_BETS_ADDRESS,
-        abi: BANKR_BETS_ABI,
-        functionName: 'bet',
-        args: [marketId, betSide, amount],
-      })
+      try {
+        const amount = parseUnits(betAmount, 6)
+        placeBet({
+          address: BANKR_BETS_ADDRESS,
+          abi: BANKR_BETS_ABI,
+          functionName: 'bet',
+          args: [marketId, betSide, amount],
+        })
+      } catch { /* invalid amount, ignore */ }
       setBetSide(null)
       setBetAmount('')
       resetApprove()
@@ -231,7 +233,10 @@ function MarketCard({ marketId }: { marketId: bigint }) {
 
   function handleBet(isUp: boolean) {
     if (!betAmount || !address) return
-    const amount = parseUnits(betAmount, 6)
+    let amount: bigint
+    try {
+      amount = parseUnits(betAmount, 6)
+    } catch { return }
     setBetSide(isUp)
     approve({
       address: USDC_ADDRESS,

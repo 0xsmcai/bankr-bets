@@ -81,21 +81,25 @@ async function getCurrentTick(poolAddress: Hex): Promise<number> {
     abi: poolAbi,
     functionName: 'slot0',
   })
-  return Number(result[1]) // tick is second return value
+  return Number(result[1])
 }
+
+// Track the last hour we created markets in, to prevent duplicate creation on restarts
+let lastCreatedHour = -1
+
+// Track the lowest unresolved market ID to avoid scanning resolved history
+let lowestUnresolved = 1n
 
 // ── Create Markets ──────────────────────────────────────────────
 
-let firstRun = true
-
 async function createMarkets() {
-  const now = Math.floor(Date.now() / 1000)
   const hour = new Date().getUTCHours()
   const minute = new Date().getUTCMinutes()
 
-  // Create markets on first run (bootstrap), or near top of hour (steady state)
-  if (!firstRun && minute > 2) return
-  firstRun = false
+  // Only create near top of hour (first 3 minutes), and only once per hour
+  if (minute > 2) return
+  if (hour === lastCreatedHour) return
+  lastCreatedHour = hour
 
   const tokens = [
     { address: DRB, name: 'DRB', pool: deployment.contracts.DRBPool as Hex },
@@ -105,6 +109,7 @@ async function createMarkets() {
   for (let i = 0; i < tokens.length; i++) {
     if (i > 0) await sleep(2000) // let nonce settle between tokens
     const token = tokens[i]
+
     // Always create 1-hour markets
     try {
       const hash = await walletClient.writeContract({
@@ -164,7 +169,8 @@ async function resolveMarkets() {
 
   const now = Math.floor(Date.now() / 1000)
 
-  for (let id = 1n; id < nextId; id++) {
+  // Only scan from lowest known unresolved market
+  for (let id = lowestUnresolved; id < nextId; id++) {
     try {
       const market = await publicClient.readContract({
         address: BANKR_BETS,
@@ -173,14 +179,16 @@ async function resolveMarkets() {
         args: [id],
       })
 
-      // Skip resolved markets
-      if (market.resolved) continue
+      if (market.resolved) {
+        // Advance the low-water mark past contiguous resolved markets
+        if (id === lowestUnresolved) lowestUnresolved = id + 1n
+        continue
+      }
 
       // Skip markets that haven't closed yet
       const closeTime = Number(market.closeTime)
       if (now < closeTime) continue
 
-      // Read current tick from the pool as off-chain price
       const offChainTick = await getCurrentTick(market.pool as Hex)
 
       log(`Resolving market ${id} (token: ${market.token}, offChainTick: ${offChainTick})`)
@@ -194,8 +202,9 @@ async function resolveMarkets() {
       await publicClient.waitForTransactionReceipt({ hash })
 
       log(`Resolved market ${id}. TX: ${hash}`)
+
+      if (id === lowestUnresolved) lowestUnresolved = id + 1n
     } catch (e: any) {
-      // Expected for markets that are already resolved or not ready
       if (!e.message?.includes('MarketAlreadyResolved') && !e.message?.includes('MarketNotClosed')) {
         log(`Error resolving market ${id}: ${e.message?.slice(0, 150)}`)
       }
@@ -203,7 +212,7 @@ async function resolveMarkets() {
   }
 }
 
-// ── Main Loop ───────────────────────────────────────────────────
+// ── Main Loop (serialized via recursive setTimeout) ─────────────
 
 async function tick() {
   try {
@@ -212,6 +221,8 @@ async function tick() {
   } catch (e: any) {
     log(`Tick error: ${e.message?.slice(0, 200)}`)
   }
+  // Schedule next tick after this one completes (prevents overlap)
+  setTimeout(tick, 60_000)
 }
 
 async function main() {
@@ -220,11 +231,33 @@ async function main() {
   log(`Contract: ${BANKR_BETS}`)
   log(`Chain: ${deployment.chain} (${deployment.chainId})`)
 
-  // Run immediately
-  await tick()
+  // Initialize lowestUnresolved by scanning existing markets
+  try {
+    const nextId = await publicClient.readContract({
+      address: BANKR_BETS,
+      abi,
+      functionName: 'nextMarketId',
+    })
+    for (let id = 1n; id < nextId; id++) {
+      const market = await publicClient.readContract({
+        address: BANKR_BETS,
+        abi,
+        functionName: 'getMarket',
+        args: [id],
+      })
+      if (!market.resolved) {
+        lowestUnresolved = id
+        break
+      }
+      lowestUnresolved = id + 1n
+    }
+    log(`Lowest unresolved market: ${lowestUnresolved}`)
+  } catch (e: any) {
+    log(`Failed to initialize unresolved marker: ${e.message?.slice(0, 100)}`)
+  }
 
-  // Then every 60 seconds
-  setInterval(tick, 60_000)
+  // Run first tick immediately, then recursive setTimeout handles the rest
+  await tick()
 
   log('Keeper running. Checking every 60s.')
 }
