@@ -156,7 +156,7 @@ contract BankrBetsTest is Test {
     function _bet(address user, uint256 marketId, uint256 amount, bool isUp) internal {
         vm.startPrank(user);
         usdc.approve(address(market), amount);
-        market.bet(marketId, isUp);
+        market.bet(marketId, isUp, amount);
         vm.stopPrank();
     }
 
@@ -252,42 +252,46 @@ contract BankrBetsTest is Test {
         vm.startPrank(alice);
         usdc.approve(address(market), 100e6);
         vm.expectRevert(BankrBets.BettingClosed.selector);
-        market.bet(1, true);
+        market.bet(1, true, 100e6);
         vm.stopPrank();
     }
 
     function test_bet_revertIfTooSmall() public {
         _createMarket();
         vm.startPrank(alice);
-        usdc.approve(address(market), 0.5e6); // 0.5 USDC < MIN_BET
+        usdc.approve(address(market), 0.5e6);
         vm.expectRevert(BankrBets.BetTooSmall.selector);
-        market.bet(1, true);
+        market.bet(1, true, 0.5e6);
+        vm.stopPrank();
+    }
+
+    function test_bet_revertIfTooLarge() public {
+        _createMarket();
+        vm.startPrank(alice);
+        usdc.approve(address(market), 2_000e6);
+        vm.expectRevert(BankrBets.BetTooLarge.selector);
+        market.bet(1, true, 2_000e6);
         vm.stopPrank();
     }
 
     function test_bet_revertIfMarketCapExceeded() public {
         _createMarket();
-        // Fill market to cap
         _betUp(alice, 1_000e6);
         _betDown(bob, 1_000e6);
-        // Multiple bets to fill... let's just test with one big bet
-        // Need to modify: use carol to push over
-        usdc.mint(address(0xAAA), 10_000e6);
         for (uint256 i = 0; i < 8; i++) {
             address bettor = makeAddr(string(abi.encodePacked("bettor", i)));
             usdc.mint(bettor, 1_000e6);
             vm.startPrank(bettor);
             usdc.approve(address(market), 1_000e6);
-            market.bet(1, i % 2 == 0);
+            market.bet(1, i % 2 == 0, 1_000e6);
             vm.stopPrank();
         }
-        // Now at $10,000 — next bet should fail
         address lastBettor = makeAddr("lastBettor");
         usdc.mint(lastBettor, 100e6);
         vm.startPrank(lastBettor);
         usdc.approve(address(market), 100e6);
         vm.expectRevert(BankrBets.MarketCapExceeded.selector);
-        market.bet(1, true);
+        market.bet(1, true, 100e6);
         vm.stopPrank();
     }
 
@@ -298,7 +302,7 @@ contract BankrBetsTest is Test {
         vm.startPrank(alice);
         usdc.approve(address(market), 100e6);
         vm.expectRevert();
-        market.bet(1, true);
+        market.bet(1, true, 100e6);
         vm.stopPrank();
     }
 
@@ -382,7 +386,7 @@ contract BankrBetsTest is Test {
 
         // Don't warp — still before closeTime
         vm.prank(keeper);
-        vm.expectRevert(BankrBets.MarketNotPending.selector);
+        vm.expectRevert(BankrBets.MarketNotClosed.selector);
         market.resolve(1, 200);
     }
 

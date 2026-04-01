@@ -124,6 +124,7 @@ contract BankrBets is Ownable2Step, ReentrancyGuardTransient, Pausable {
     mapping(uint256 => uint256) public marketParticipants; // unique bettor count
     mapping(uint256 => mapping(address => bool)) public hasBet; // dedup for participant count
     mapping(address => uint256) public userExposure; // total active bets across all markets
+    mapping(uint256 => bool) public feesDistributed; // prevent double fee distribution
 
     // ── Events ────────────────────────────────────────────────────
 
@@ -167,6 +168,10 @@ contract BankrBets is Ownable2Step, ReentrancyGuardTransient, Pausable {
     error OracleError();
     error OracleDivergence();
     error MinimumNotMet();
+    error MarketNotClosed();
+    error CannotSwitchSides();
+    error FeesAlreadyDistributed();
+    error ZeroAddress();
 
     // ── Modifiers ─────────────────────────────────────────────────
 
@@ -185,6 +190,8 @@ contract BankrBets is Ownable2Step, ReentrancyGuardTransient, Pausable {
         address _insuranceFund,
         address _admin
     ) Ownable(_admin) {
+        if (_usdc == address(0) || _keeper == address(0) || _treasury == address(0)
+            || _insuranceFund == address(0) || _admin == address(0)) revert ZeroAddress();
         usdc = IERC20(_usdc);
         agentRegistry = IIdentityRegistry(_agentRegistry);
         keeper = _keeper;
@@ -248,7 +255,7 @@ contract BankrBets is Ownable2Step, ReentrancyGuardTransient, Pausable {
 
     // ── Public: Bet ───────────────────────────────────────────────
 
-    function bet(uint256 marketId, bool isUp)
+    function bet(uint256 marketId, bool isUp, uint256 amount)
         external
         nonReentrant
         whenNotPaused
@@ -257,10 +264,8 @@ contract BankrBets is Ownable2Step, ReentrancyGuardTransient, Pausable {
         if (m.outcome != Outcome.PENDING) revert MarketNotPending();
         if (block.timestamp >= m.bettingDeadline) revert BettingClosed();
 
-        // Read amount from allowance — user approves exact amount
-        uint256 amount = usdc.allowance(msg.sender, address(this));
         if (amount < MIN_BET) revert BetTooSmall();
-        if (amount > MAX_BET) amount = MAX_BET; // cap silently
+        if (amount > MAX_BET) revert BetTooLarge();
 
         // Cap checks
         if (uint256(m.totalPool) + amount > MAX_MARKET) revert MarketCapExceeded();
@@ -270,7 +275,7 @@ contract BankrBets is Ownable2Step, ReentrancyGuardTransient, Pausable {
         // Effects before interactions (CEI pattern from PoolTogether V5)
         UserPosition storage pos = positions[marketId][msg.sender];
         // Allow multiple bets on same side, reject switching sides
-        if (pos.side != 0 && pos.side != (isUp ? 1 : 2)) revert NoBet(); // can't bet both sides
+        if (pos.side != 0 && pos.side != (isUp ? 1 : 2)) revert CannotSwitchSides();
         pos.amount += uint128(amount);
         pos.side = isUp ? 1 : 2;
 
@@ -308,7 +313,7 @@ contract BankrBets is Ownable2Step, ReentrancyGuardTransient, Pausable {
         Market storage m = markets[marketId];
         if (m.resolved) revert MarketAlreadyResolved();
         if (m.outcome != Outcome.PENDING) revert MarketNotPending();
-        if (block.timestamp < m.closeTime) revert MarketNotPending();
+        if (block.timestamp < m.closeTime) revert MarketNotClosed();
 
         // Check minimum participation
         if (m.totalPool < MIN_TOTAL || m.totalUp < MIN_PER_SIDE
@@ -424,6 +429,8 @@ contract BankrBets is Ownable2Step, ReentrancyGuardTransient, Pausable {
     function distributeFees(uint256 marketId) external {
         Market storage m = markets[marketId];
         if (!m.resolved || m.outcome == Outcome.VOIDED) return;
+        if (feesDistributed[marketId]) revert FeesAlreadyDistributed();
+        feesDistributed[marketId] = true;
 
         uint256 fee = Math.mulDiv(m.totalPool, FEE_BPS, 10_000);
         uint256 treasuryShare = Math.mulDiv(fee, TREASURY_BPS, FEE_BPS);
