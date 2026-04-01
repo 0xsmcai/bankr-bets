@@ -8,7 +8,6 @@ export const config = createConfig({
     injected(),
     coinbaseWallet({
       appName: 'Bankr Bets',
-      preference: { options: 'all' },
     }),
   ],
   transports: {
