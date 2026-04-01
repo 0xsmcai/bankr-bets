@@ -536,19 +536,33 @@ contract BankrBetsTest is Test {
 
     // ── Emergency Withdraw ────────────────────────────────────────
 
-    function test_emergencyWithdraw_whenPaused() public {
+    function test_emergencyWithdraw_revertIfPausedButNotPastDelay() public {
         _createMarket();
         _betUp(alice, 500e6);
 
         vm.prank(admin);
         market.pause();
 
+        // Pausing alone does NOT enable emergency withdraw (prevents race with resolution)
+        vm.prank(alice);
+        vm.expectRevert(BankrBets.NotVoidedOrUnresolved.selector);
+        market.emergencyWithdraw(1);
+    }
+
+    function test_emergencyWithdraw_worksAfterMaxDelayEvenWhenPaused() public {
+        _createMarket();
+        _betUp(alice, 500e6);
+
+        vm.prank(admin);
+        market.pause();
+
+        // Must still wait past MAX_RESOLUTION_DELAY
+        vm.warp(block.timestamp + 1 hours + 4 hours + 1);
+
         uint256 balBefore = usdc.balanceOf(alice);
         vm.prank(alice);
         market.emergencyWithdraw(1);
-        uint256 balAfter = usdc.balanceOf(alice);
-
-        assertEq(balAfter - balBefore, 500e6); // full refund
+        assertEq(usdc.balanceOf(alice) - balBefore, 500e6);
     }
 
     function test_emergencyWithdraw_afterMaxResolutionDelay() public {

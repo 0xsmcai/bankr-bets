@@ -364,6 +364,11 @@ contract BankrBets is Ownable2Step, ReentrancyGuardTransient, Pausable {
     }
 
     /// @notice Permissionless TWAP-only resolution after grace period (keeper down fallback)
+    /// @dev TWAP reads the window ending at block.timestamp, not at closeTime.
+    ///      This means late resolution uses post-close price data. The keeper SHOULD
+    ///      resolve ASAP after closeTime. resolveByTwap is a safety net for keeper
+    ///      downtime — the TWAP quality degrades with delay, but MAX_RESOLUTION_DELAY
+    ///      auto-voids if too late. This is an accepted architectural trade-off.
     function resolveByTwap(uint256 marketId) external nonReentrant {
         Market storage m = markets[marketId];
         if (m.resolved) revert MarketAlreadyResolved();
@@ -441,13 +446,11 @@ contract BankrBets is Ownable2Step, ReentrancyGuardTransient, Pausable {
         } else if (m.resolved) {
             revert MarketAlreadyResolved(); // use claim() for resolved markets
         } else {
-            // Unresolved market: only allow withdrawal if BOTH:
-            // (a) past MAX_RESOLUTION_DELAY (keeper AND public had their chance), AND
-            // (b) system is paused OR max delay exceeded
-            // This prevents losers from front-running resolution to void (Codex Finding #2)
+            // Unresolved market: only allow withdrawal past MAX_RESOLUTION_DELAY.
+            // Pause does NOT unlock early withdrawal — prevents race with resolution.
+            // (Codex Cycle 3: pause + emergencyWithdraw was still raceable)
             bool isPastMaxDelay = block.timestamp > m.closeTime + MAX_RESOLUTION_DELAY;
-            bool systemPaused = paused();
-            if (!isPastMaxDelay && !systemPaused) revert NotVoidedOrUnresolved();
+            if (!isPastMaxDelay) revert NotVoidedOrUnresolved();
 
             // Void the market (safe now — resolution window has fully expired)
             if (m.outcome == Outcome.PENDING) {
