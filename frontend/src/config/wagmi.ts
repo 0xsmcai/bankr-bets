@@ -7,7 +7,7 @@ export const config = createConfig({
   connectors: [
     coinbaseWallet({
       appName: 'Bankr Bets',
-      preference: 'smartWalletOnly',
+      preference: { options: 'smartWalletOnly' },
     }),
   ],
   transports: {

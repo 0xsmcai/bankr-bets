@@ -34,7 +34,7 @@ const Duration = { ONE_HOUR: 0, FOUR_HOUR: 1, DAILY: 2 } as const
 
 // Token addresses (mock addresses from testnet deploy)
 const DRB = '0x0000000000000000000000000000000000000d4b' as Hex
-const BNKR = '0x000000000000000000000000000000000000b14c' as Hex
+const BNKR = '0x000000000000000000000000000000000000b14C' as Hex
 
 // ── ABI (minimal — only what the keeper calls) ──────────────────
 
@@ -73,6 +73,8 @@ function log(msg: string) {
   console.log(`[${new Date().toISOString()}] ${msg}`)
 }
 
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
+
 async function getCurrentTick(poolAddress: Hex): Promise<number> {
   const result = await publicClient.readContract({
     address: poolAddress,
@@ -100,7 +102,9 @@ async function createMarkets() {
     { address: BNKR, name: 'BNKR', pool: deployment.contracts.BNKRPool as Hex },
   ]
 
-  for (const token of tokens) {
+  for (let i = 0; i < tokens.length; i++) {
+    if (i > 0) await sleep(2000) // let nonce settle between tokens
+    const token = tokens[i]
     // Always create 1-hour markets
     try {
       const hash = await walletClient.writeContract({
@@ -109,6 +113,7 @@ async function createMarkets() {
         functionName: 'createMarket',
         args: [token.address, Duration.ONE_HOUR],
       })
+      await publicClient.waitForTransactionReceipt({ hash })
       log(`Created 1h ${token.name} market. TX: ${hash}`)
     } catch (e: any) {
       log(`Failed to create 1h ${token.name}: ${e.message?.slice(0, 100)}`)
@@ -123,6 +128,7 @@ async function createMarkets() {
           functionName: 'createMarket',
           args: [token.address, Duration.FOUR_HOUR],
         })
+        await publicClient.waitForTransactionReceipt({ hash })
         log(`Created 4h ${token.name} market. TX: ${hash}`)
       } catch (e: any) {
         log(`Failed to create 4h ${token.name}: ${e.message?.slice(0, 100)}`)
@@ -138,6 +144,7 @@ async function createMarkets() {
           functionName: 'createMarket',
           args: [token.address, Duration.DAILY],
         })
+        await publicClient.waitForTransactionReceipt({ hash })
         log(`Created 24h ${token.name} market. TX: ${hash}`)
       } catch (e: any) {
         log(`Failed to create 24h ${token.name}: ${e.message?.slice(0, 100)}`)
@@ -184,6 +191,7 @@ async function resolveMarkets() {
         functionName: 'resolve',
         args: [id, offChainTick],
       })
+      await publicClient.waitForTransactionReceipt({ hash })
 
       log(`Resolved market ${id}. TX: ${hash}`)
     } catch (e: any) {
