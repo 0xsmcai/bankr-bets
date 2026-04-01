@@ -146,6 +146,9 @@ contract BankrBets is Ownable2Step, ReentrancyGuardTransient, Pausable {
         uint256 indexed marketId, address indexed bettor, uint256 amount
     );
     event FeesDistributed(uint256 treasuryAmount, uint256 insuranceAmount);
+    event KeeperUpdated(address indexed newKeeper);
+    event TokenAdded(address indexed token, address pool, bool isToken0);
+    event TokenRemoved(address indexed token);
 
     // ── Errors ────────────────────────────────────────────────────
 
@@ -202,15 +205,20 @@ contract BankrBets is Ownable2Step, ReentrancyGuardTransient, Pausable {
     // ── Admin ─────────────────────────────────────────────────────
 
     function setKeeper(address _keeper) external onlyOwner {
+        if (_keeper == address(0)) revert ZeroAddress();
         keeper = _keeper;
+        emit KeeperUpdated(_keeper);
     }
 
     function addToken(address token, address pool, bool isToken0) external onlyOwner {
+        if (token == address(0) || pool == address(0)) revert ZeroAddress();
         tokens[token] = TokenConfig(IUniswapV3Pool(pool), isToken0, true);
+        emit TokenAdded(token, pool, isToken0);
     }
 
     function removeToken(address token) external onlyOwner {
         tokens[token].active = false;
+        emit TokenRemoved(token);
     }
 
     function pause() external onlyOwner { _pause(); }
@@ -374,15 +382,17 @@ contract BankrBets is Ownable2Step, ReentrancyGuardTransient, Pausable {
             // Voided: return original deposit, no fees
             payout = pos.amount;
         } else {
-            // Check if user is on winning side
             bool isWinner = (m.outcome == Outcome.UP && pos.side == 1)
                          || (m.outcome == Outcome.DOWN && pos.side == 2);
-            if (!isWinner) revert NotWinner();
-
-            // Payout math: Math.mulDiv for 512-bit precision (from Gnosis CTF pattern)
-            uint256 totalWinning = m.outcome == Outcome.UP ? m.totalUp : m.totalDown;
-            uint256 distributable = Math.mulDiv(m.totalPool, 10_000 - FEE_BPS, 10_000);
-            payout = Math.mulDiv(distributable, pos.amount, totalWinning);
+            if (isWinner) {
+                // Payout math: Math.mulDiv for 512-bit precision (from Gnosis CTF pattern)
+                uint256 totalWinning = m.outcome == Outcome.UP ? m.totalUp : m.totalDown;
+                uint256 distributable = Math.mulDiv(m.totalPool, 10_000 - FEE_BPS, 10_000);
+                payout = Math.mulDiv(distributable, pos.amount, totalWinning);
+            } else {
+                // Loser: payout = 0, but we still clear their exposure
+                payout = 0;
+            }
         }
 
         // Effects before interactions (PoolTogether V5 claim pattern)
@@ -406,6 +416,12 @@ contract BankrBets is Ownable2Step, ReentrancyGuardTransient, Pausable {
         bool systemPaused = paused();
         if (!isPastGrace && !systemPaused) revert NotVoidedOrUnresolved();
 
+        // Void the entire market on first emergency withdrawal to prevent
+        // insolvency from partial withdrawals + later resolution (CSO Finding #8/#9)
+        if (m.outcome == Outcome.PENDING) {
+            _voidMarket(m, marketId);
+        }
+
         UserPosition storage pos = positions[marketId][msg.sender];
         if (pos.amount == 0) revert NoBet();
         if (pos.claimed) revert AlreadyClaimed();
@@ -426,7 +442,7 @@ contract BankrBets is Ownable2Step, ReentrancyGuardTransient, Pausable {
     // ── Admin: Distribute Fees ────────────────────────────────────
 
     /// @notice Distributes accumulated fees from resolved markets
-    function distributeFees(uint256 marketId) external {
+    function distributeFees(uint256 marketId) external nonReentrant {
         Market storage m = markets[marketId];
         if (!m.resolved || m.outcome == Outcome.VOIDED) return;
         if (feesDistributed[marketId]) revert FeesAlreadyDistributed();

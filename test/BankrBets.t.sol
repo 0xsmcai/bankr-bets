@@ -500,15 +500,18 @@ contract BankrBetsTest is Test {
         market.claim(1);
     }
 
-    function test_claim_revertIfNotWinner() public {
+    function test_claim_loserGetsZeroButClearsExposure() public {
         _createMarket();
         _betUp(alice, 500e6);
         _betDown(bob, 500e6);
         _resolveUp(1);
 
-        vm.prank(bob); // bob bet DOWN, UP won
-        vm.expectRevert(BankrBets.NotWinner.selector);
-        market.claim(1);
+        uint256 bobBalBefore = usdc.balanceOf(bob);
+        vm.prank(bob); // bob bet DOWN, UP won — gets 0 payout
+        uint256 payout = market.claim(1);
+        assertEq(payout, 0);
+        assertEq(usdc.balanceOf(bob), bobBalBefore); // no change
+        assertEq(market.userExposure(bob), 0); // exposure cleared
     }
 
     function test_claim_revertIfNotResolved() public {
