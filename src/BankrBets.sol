@@ -99,6 +99,7 @@ contract BankrBets is Ownable2Step, ReentrancyGuardTransient, Pausable {
 
     // Divergence threshold: max ticks between TWAP and keeper price
     int24 public constant MAX_TICK_DIVERGENCE = 2000; // ~22% price difference
+    uint256 public constant MAX_RESOLUTION_DELAY = 4 hours; // auto-void if not resolved within this
 
     // Minimum market participation
     uint256 public constant MIN_TOTAL = 100e6;       // $100 total
@@ -224,6 +225,13 @@ contract BankrBets is Ownable2Step, ReentrancyGuardTransient, Pausable {
     function pause() external onlyOwner { _pause(); }
     function unpause() external onlyOwner { _unpause(); }
 
+    /// @notice Admin can void a specific market (e.g., detected oracle manipulation mid-market)
+    function voidMarket(uint256 marketId) external onlyOwner {
+        Market storage m = markets[marketId];
+        if (m.resolved) revert MarketAlreadyResolved();
+        _voidMarket(m, marketId);
+    }
+
     // ── Keeper: Create Market ─────────────────────────────────────
 
     function createMarket(address token, Duration duration)
@@ -323,6 +331,12 @@ contract BankrBets is Ownable2Step, ReentrancyGuardTransient, Pausable {
         if (m.outcome != Outcome.PENDING) revert MarketNotPending();
         if (block.timestamp < m.closeTime) revert MarketNotClosed();
 
+        // Auto-void if resolution is too late (ethskills Finding 3A)
+        if (block.timestamp > m.closeTime + MAX_RESOLUTION_DELAY) {
+            _voidMarket(m, marketId);
+            return;
+        }
+
         // Check minimum participation
         if (m.totalPool < MIN_TOTAL || m.totalUp < MIN_PER_SIDE
             || m.totalDown < MIN_PER_SIDE || marketParticipants[marketId] < MIN_PARTICIPANTS)
@@ -352,6 +366,12 @@ contract BankrBets is Ownable2Step, ReentrancyGuardTransient, Pausable {
         if (m.resolved) revert MarketAlreadyResolved();
         if (m.outcome != Outcome.PENDING) revert MarketNotPending();
         if (block.timestamp < m.closeTime + GRACE_PERIOD) revert GracePeriodNotElapsed();
+
+        // Auto-void if too late (ethskills Finding 3A — prevents exploiting stale TWAP)
+        if (block.timestamp > m.closeTime + MAX_RESOLUTION_DELAY) {
+            _voidMarket(m, marketId);
+            return;
+        }
 
         // Check minimums
         if (m.totalPool < MIN_TOTAL || m.totalUp < MIN_PER_SIDE
@@ -399,8 +419,10 @@ contract BankrBets is Ownable2Step, ReentrancyGuardTransient, Pausable {
         pos.claimed = true;
         userExposure[msg.sender] -= pos.amount;
 
-        // Interaction last
-        usdc.safeTransfer(msg.sender, payout);
+        // Interaction last — skip zero transfer for losers (saves gas)
+        if (payout > 0) {
+            usdc.safeTransfer(msg.sender, payout);
+        }
 
         emit Claimed(marketId, msg.sender, payout);
     }
