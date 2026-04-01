@@ -150,6 +150,8 @@ contract BankrBets is Ownable2Step, ReentrancyGuardTransient, Pausable {
     );
     event FeesDistributed(uint256 treasuryAmount, uint256 insuranceAmount);
     event KeeperUpdated(address indexed newKeeper);
+    event TreasuryUpdated(address indexed newTreasury);
+    event InsuranceFundUpdated(address indexed newInsuranceFund);
     event TokenAdded(address indexed token, address pool, bool isToken0);
     event TokenRemoved(address indexed token);
 
@@ -196,8 +198,8 @@ contract BankrBets is Ownable2Step, ReentrancyGuardTransient, Pausable {
         address _insuranceFund,
         address _admin
     ) Ownable(_admin) {
-        if (_usdc == address(0) || _keeper == address(0) || _treasury == address(0)
-            || _insuranceFund == address(0) || _admin == address(0)) revert ZeroAddress();
+        if (_usdc == address(0) || _agentRegistry == address(0) || _keeper == address(0)
+            || _treasury == address(0) || _insuranceFund == address(0) || _admin == address(0)) revert ZeroAddress();
         usdc = IERC20(_usdc);
         agentRegistry = IIdentityRegistry(_agentRegistry);
         keeper = _keeper;
@@ -211,6 +213,18 @@ contract BankrBets is Ownable2Step, ReentrancyGuardTransient, Pausable {
         if (_keeper == address(0)) revert ZeroAddress();
         keeper = _keeper;
         emit KeeperUpdated(_keeper);
+    }
+
+    function setTreasury(address _treasury) external onlyOwner {
+        if (_treasury == address(0)) revert ZeroAddress();
+        treasury = _treasury;
+        emit TreasuryUpdated(_treasury);
+    }
+
+    function setInsuranceFund(address _insuranceFund) external onlyOwner {
+        if (_insuranceFund == address(0)) revert ZeroAddress();
+        insuranceFund = _insuranceFund;
+        emit InsuranceFundUpdated(_insuranceFund);
     }
 
     function addToken(address token, address pool, bool isToken0) external onlyOwner {

@@ -649,6 +649,50 @@ contract BankrBetsTest is Test {
         assertEq(usdc.balanceOf(insurance), 10e6);
     }
 
+    function test_distributeFees_revertIfDouble() public {
+        _createMarket();
+        _betUp(alice, 500e6);
+        _betDown(bob, 500e6);
+        _resolveUp(1);
+
+        market.distributeFees(1);
+
+        vm.expectRevert(BankrBets.FeesAlreadyDistributed.selector);
+        market.distributeFees(1);
+    }
+
+    function test_distributeFees_nopOnVoided() public {
+        _createMarket();
+        _betUp(alice, 500e6);
+        _betDown(bob, 500e6);
+
+        // Void via flat price
+        vm.warp(block.timestamp + 1 hours + 1);
+        vm.prank(keeper);
+        market.resolve(1, 100);
+
+        // Should silently return, no transfer
+        uint256 treasuryBal = usdc.balanceOf(treasury);
+        market.distributeFees(1);
+        assertEq(usdc.balanceOf(treasury), treasuryBal); // unchanged
+    }
+
+    function test_distributeFees_beforeAllClaims() public {
+        _createMarket();
+        _betUp(alice, 500e6);
+        _betDown(bob, 500e6);
+        _resolveUp(1);
+
+        // Distribute fees BEFORE any claims
+        market.distributeFees(1);
+        assertEq(usdc.balanceOf(treasury), 20e6);
+
+        // Alice can still claim full payout
+        vm.prank(alice);
+        uint256 payout = market.claim(1);
+        assertEq(payout, 970e6);
+    }
+
     // ── Oracle Error ──────────────────────────────────────────────
 
     function test_createMarket_revertIfOracleError() public {
