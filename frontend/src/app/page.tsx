@@ -73,17 +73,9 @@ function Header() {
             <button className="btn text-xs" onClick={() => disconnect()}>×</button>
           </div>
         ) : (
-          <div className="flex gap-2">
-            {connectors.map((connector) => (
-              <button
-                key={connector.uid}
-                className="btn btn-primary text-xs"
-                onClick={() => connect({ connector })}
-              >
-                {connector.name === 'Injected' ? 'BROWSER WALLET' : 'COINBASE'}
-              </button>
-            ))}
-          </div>
+          <button className="btn btn-primary" onClick={() => connect({ connector: connectors[0] })}>
+            CONNECT
+          </button>
         )}
       </div>
     </header>
