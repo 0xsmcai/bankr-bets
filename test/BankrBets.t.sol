@@ -551,11 +551,12 @@ contract BankrBetsTest is Test {
         assertEq(balAfter - balBefore, 500e6); // full refund
     }
 
-    function test_emergencyWithdraw_afterGracePeriod() public {
+    function test_emergencyWithdraw_afterMaxResolutionDelay() public {
         _createMarket();
         _betUp(alice, 500e6);
 
-        vm.warp(block.timestamp + 1 hours + 2 hours + 1);
+        // Must wait past MAX_RESOLUTION_DELAY (4 hours), not just grace period
+        vm.warp(block.timestamp + 1 hours + 4 hours + 1);
 
         vm.prank(alice);
         market.emergencyWithdraw(1);

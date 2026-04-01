@@ -59,6 +59,8 @@ contract BankrBets is Ownable2Step, ReentrancyGuardTransient, Pausable {
 
     struct Market {
         address token;           // betting token address (DRB or BNKR)
+        address pool;            // snapshotted pool address at creation (Codex Finding #3)
+        bool isToken0;           // snapshotted at creation
         Duration duration;
         uint48 openTime;
         uint48 closeTime;
@@ -254,6 +256,8 @@ contract BankrBets is Ownable2Step, ReentrancyGuardTransient, Pausable {
         marketId = nextMarketId++;
         markets[marketId] = Market({
             token: token,
+            pool: address(tc.pool),
+            isToken0: tc.isToken0,
             duration: duration,
             openTime: openTime,
             closeTime: closeTime,
@@ -345,10 +349,9 @@ contract BankrBets is Ownable2Step, ReentrancyGuardTransient, Pausable {
             return;
         }
 
-        // Read closing TWAP
-        TokenConfig storage tc = tokens[m.token];
+        // Read closing TWAP using snapshotted pool (not live config)
         (, uint32 closeWindow) = _twapWindows(m.duration);
-        int24 closingTick = _readTwap(tc.pool, closeWindow);
+        int24 closingTick = _readTwap(IUniswapV3Pool(m.pool), closeWindow);
 
         // Hybrid oracle: check divergence between TWAP and keeper's off-chain tick
         int24 divergence = closingTick > offChainTick
@@ -381,9 +384,8 @@ contract BankrBets is Ownable2Step, ReentrancyGuardTransient, Pausable {
             return;
         }
 
-        TokenConfig storage tc = tokens[m.token];
         (, uint32 closeWindow) = _twapWindows(m.duration);
-        int24 closingTick = _readTwap(tc.pool, closeWindow);
+        int24 closingTick = _readTwap(IUniswapV3Pool(m.pool), closeWindow);
 
         _resolveWithTick(m, marketId, closingTick);
     }
@@ -432,16 +434,25 @@ contract BankrBets is Ownable2Step, ReentrancyGuardTransient, Pausable {
     /// @notice Returns original deposit when market is unresolved and paused or past grace period
     function emergencyWithdraw(uint256 marketId) external nonReentrant {
         Market storage m = markets[marketId];
-        if (m.resolved) revert MarketAlreadyResolved();
 
-        bool isPastGrace = block.timestamp > m.closeTime + GRACE_PERIOD;
-        bool systemPaused = paused();
-        if (!isPastGrace && !systemPaused) revert NotVoidedOrUnresolved();
+        // If market is already voided, allow claim-style withdrawal
+        if (m.resolved && m.outcome == Outcome.VOIDED) {
+            // Fall through to withdrawal logic below
+        } else if (m.resolved) {
+            revert MarketAlreadyResolved(); // use claim() for resolved markets
+        } else {
+            // Unresolved market: only allow withdrawal if BOTH:
+            // (a) past MAX_RESOLUTION_DELAY (keeper AND public had their chance), AND
+            // (b) system is paused OR max delay exceeded
+            // This prevents losers from front-running resolution to void (Codex Finding #2)
+            bool isPastMaxDelay = block.timestamp > m.closeTime + MAX_RESOLUTION_DELAY;
+            bool systemPaused = paused();
+            if (!isPastMaxDelay && !systemPaused) revert NotVoidedOrUnresolved();
 
-        // Void the entire market on first emergency withdrawal to prevent
-        // insolvency from partial withdrawals + later resolution (CSO Finding #8/#9)
-        if (m.outcome == Outcome.PENDING) {
-            _voidMarket(m, marketId);
+            // Void the market (safe now — resolution window has fully expired)
+            if (m.outcome == Outcome.PENDING) {
+                _voidMarket(m, marketId);
+            }
         }
 
         UserPosition storage pos = positions[marketId][msg.sender];
@@ -512,7 +523,7 @@ contract BankrBets is Ownable2Step, ReentrancyGuardTransient, Pausable {
         if (closingTick == m.openingTick) {
             _voidMarket(m, marketId);
         } else {
-            bool isToken0 = tokens[m.token].isToken0;
+            bool isToken0 = m.isToken0; // use snapshotted value
             // For token0: tick up = price up. For token1: tick up = price down.
             bool priceUp = isToken0 ? (closingTick > m.openingTick) : (closingTick < m.openingTick);
             m.outcome = priceUp ? Outcome.UP : Outcome.DOWN;
