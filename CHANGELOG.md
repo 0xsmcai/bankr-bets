@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.2.0 — 2026-04-01 (Frontend + Keeper Hardening)
+
+### Frontend
+- Full prediction market UI: market list, bet flow, claim, faucet
+- Tab navigation: Active / Resolved / My Bets
+- Onboarding flow for new users
+- Token name display (DRB, BNKR) with countdown timers
+- Payout multiplier display, USDC balance in header
+- Mobile responsive design
+- Deployed to GitHub Pages via Actions workflow
+- Wallet: injected (MetaMask) + Coinbase Smart Wallet connectors
+- Design system: DESIGN.md fully implemented (dark warm brown, Space Grotesk/Satoshi/Space Mono, CRT scanlines)
+
+### Keeper Hardening
+- Fixed BNKR market creation (address checksum + nonce race)
+- Removed restart bootstrap (prevents duplicate market spam)
+- Serialized tick loop (recursive setTimeout, no overlapping ticks)
+- Efficient resolution: tracks lowestUnresolved, skips resolved history
+- Transaction receipt waiting between all on-chain calls
+
+### QA + Reviews
+- QA: 3 issues found, 2 fixed (wallet fallback, empty state)
+- Design review: all tokens match DESIGN.md
+- Codex review: 6 findings, 4 fixed (keeper dedup, serialized loop, resolution scan, input validation)
+
+### Security
+- Frontend: no XSS sinks (React escaped values, no dangerouslySetInnerHTML)
+- Input validation: parseUnits wrapped in try/catch
+- Wallet separation maintained (deploy wallet for keeper only)
+
 ## 0.1.0 — 2026-04-01 (Testnet)
 
 ### Contract
