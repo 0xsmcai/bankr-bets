@@ -413,7 +413,7 @@ export default function Home() {
       <footer className="mt-16 pt-6 border-t border-[rgba(212,208,200,0.05)] text-center">
         <p className="mono text-xs" style={{ color: 'var(--text-dim)' }}>
           Built by{' '}
-          <a href="https://0xsmcai.github.io/" target="_blank" rel="noopener">0xSMC</a>
+          <a href="https://0xsmcai.github.io/" target="_blank" rel="noopener">SMCFactory</a>
           {' · '}
           <a href="https://github.com/0xsmcai/bankr-bets" target="_blank" rel="noopener">GitHub</a>
           {' · '}
