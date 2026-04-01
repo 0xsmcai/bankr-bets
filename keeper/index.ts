@@ -33,8 +33,8 @@ const RPC = deployment.rpc
 const Duration = { ONE_HOUR: 0, FOUR_HOUR: 1, DAILY: 2 } as const
 
 // Token addresses (mock addresses from testnet deploy)
-const DRB = '0x0000000000000000000000000000000000000D4B' as Hex
-const BNKR = '0x000000000000000000000000000000000000B14C' as Hex
+const DRB = '0x0000000000000000000000000000000000000d4b' as Hex
+const BNKR = '0x000000000000000000000000000000000000b14c' as Hex
 
 // ── ABI (minimal — only what the keeper calls) ──────────────────
 
@@ -84,13 +84,16 @@ async function getCurrentTick(poolAddress: Hex): Promise<number> {
 
 // ── Create Markets ──────────────────────────────────────────────
 
+let firstRun = true
+
 async function createMarkets() {
   const now = Math.floor(Date.now() / 1000)
   const hour = new Date().getUTCHours()
   const minute = new Date().getUTCMinutes()
 
-  // Only create markets near the top of the hour (within first 2 minutes)
-  if (minute > 2) return
+  // Create markets on first run (bootstrap), or near top of hour (steady state)
+  if (!firstRun && minute > 2) return
+  firstRun = false
 
   const tokens = [
     { address: DRB, name: 'DRB', pool: deployment.contracts.DRBPool as Hex },
